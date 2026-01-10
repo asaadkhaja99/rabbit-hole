@@ -6,7 +6,7 @@ import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { uploadPdf } from './api';
+import { uploadPdf, streamChat } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -241,32 +241,6 @@ export default function App() {
     setCurrentPage(1);
   };
 
-  const generateMockResponse = (question: string): string => {
-    const lowerQuestion = question.toLowerCase();
-    
-    if (lowerQuestion.includes('method') || lowerQuestion.includes('approach')) {
-      return "The methodology section outlines a systematic approach combining quantitative and qualitative analysis. The authors employ a mixed-methods design that allows for triangulation of findings. Key techniques include statistical modeling, case study analysis, and comparative evaluation. This approach is particularly well-suited for addressing the research questions because it captures both breadth and depth of the phenomenon under investigation.";
-    }
-    
-    if (lowerQuestion.includes('result') || lowerQuestion.includes('finding')) {
-      return "The key findings indicate significant correlations between the variables studied. The results section presents empirical evidence that supports the main hypothesis while also revealing unexpected patterns in the data. Notable outcomes include improved performance metrics, validation of the theoretical framework, and identification of boundary conditions that affect the generalizability of findings.";
-    }
-    
-    if (lowerQuestion.includes('limit') || lowerQuestion.includes('weakness')) {
-      return "The authors acknowledge several limitations including sample size constraints, potential selection bias, and the cross-sectional nature of the study. External validity may be limited due to the specific context examined. Future research could address these limitations through longitudinal designs, larger sample sizes, and replication in diverse settings. Additionally, unmeasured confounding variables may influence the observed relationships.";
-    }
-    
-    if (lowerQuestion.includes('contribution') || lowerQuestion.includes('importance')) {
-      return "This work makes several significant contributions to the field. First, it extends existing theory by introducing novel conceptual frameworks. Second, it provides empirical evidence that challenges conventional wisdom. Third, it offers practical implications for practitioners and policymakers. The research fills important gaps in the literature and opens new avenues for future investigation.";
-    }
-    
-    if (lowerQuestion.includes('compare') || lowerQuestion.includes('differ')) {
-      return "Compared to previous work, this study distinguishes itself through its unique methodological approach and expanded scope. While earlier research focused on isolated aspects, this paper provides a more holistic perspective. The findings both corroborate and extend prior results, offering nuanced insights that reconcile apparent contradictions in the literature.";
-    }
-    
-    return "That's an interesting question about the paper. Based on the content, I can help you understand this concept better. The document discusses this in relation to the broader theoretical framework and empirical findings. Could you point me to a specific section or page where you'd like me to focus my analysis?";
-  };
-
   const handleStartRabbitHole = (selectedText: string, pageReference: number, parentId?: string, highlightPosition?: ScaledPosition) => {
     // Find parent depth from either open window or saved comment
     const parentWindow = parentId ? rabbitHoleWindows.find(w => w.id === parentId) : null;
@@ -389,6 +363,7 @@ export default function App() {
     const window = rabbitHoleWindows.find(w => w.id === windowId);
     if (!window) return;
 
+    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -397,7 +372,6 @@ export default function App() {
       pageReference: window.pageReference,
     };
 
-    // Update window state
     setRabbitHoleWindows(prev =>
       prev.map(w =>
         w.id === windowId
@@ -406,7 +380,6 @@ export default function App() {
       )
     );
 
-    // Also update saved comment
     setSavedRabbitHoles(prev =>
       prev.map(c =>
         c.id === windowId
@@ -415,34 +388,91 @@ export default function App() {
       )
     );
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: generateMockResponse(content),
-        timestamp: new Date(),
-        pageReference: window.pageReference,
-      };
+    // Create placeholder AI message for streaming
+    const aiMessageId = (Date.now() + 1).toString();
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      pageReference: window.pageReference,
+    };
 
-      // Update window state
-      setRabbitHoleWindows(prev =>
-        prev.map(w =>
-          w.id === windowId
-            ? { ...w, messages: [...w.messages, aiMessage] }
-            : w
-        )
-      );
+    setRabbitHoleWindows(prev =>
+      prev.map(w =>
+        w.id === windowId
+          ? { ...w, messages: [...w.messages, aiMessage] }
+          : w
+      )
+    );
 
-      // Also update saved comment
-      setSavedRabbitHoles(prev =>
-        prev.map(c =>
-          c.id === windowId
-            ? { ...c, messages: [...c.messages, aiMessage] }
-            : c
-        )
-      );
-    }, 1000);
+    setSavedRabbitHoles(prev =>
+      prev.map(c =>
+        c.id === windowId
+          ? { ...c, messages: [...c.messages, aiMessage] }
+          : c
+      )
+    );
+
+    // Stream response from backend (pass fileSearchStoreId for RAG)
+    streamChat(
+      content,
+      window.selectedText,
+      window.pageReference,
+      currentProject?.fileSearchStoreId,
+      {
+        onChunk: (text) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === windowId
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+
+          setSavedRabbitHoles(prev =>
+            prev.map(c =>
+              c.id === windowId
+                ? {
+                    ...c,
+                    messages: c.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onComplete: () => {
+          console.log('Streaming complete');
+        },
+        onError: (error) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === windowId
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: `Error: ${error}. Please try again.` }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+        },
+      }
+    );
   };
 
   const handleCreateProject = async (file: File) => {
