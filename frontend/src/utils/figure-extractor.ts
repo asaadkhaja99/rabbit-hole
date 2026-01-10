@@ -40,11 +40,6 @@ export async function extractFiguresFromPage(
       if (Math.abs(y - currentY) > 5 && currentText) {
         const figureMatch = matchFigureCaption(currentText);
         if (figureMatch) {
-          console.log('Found figure caption:', {
-            figureNumber: figureMatch.number,
-            captionText: currentText.trim(),
-            captionY: currentY,
-          });
           figures.push({
             figureNumber: figureMatch.number,
             pageNumber,
@@ -116,18 +111,8 @@ export function captureFigureRegion(
   // Distance from top in canvas pixels = (pageHeight - captionY) * effectiveScale
   const canvasCaptionY = (pageHeight - captionY) * effectiveScale;
 
-  console.log('captureFigureRegion:', {
-    captionY,
-    pageHeight,
-    effectiveScale,
-    canvasHeight: canvas.height,
-    canvasCaptionY,
-  });
-
   // Capture from top of canvas down to just below the caption (add small margin)
   const captureHeight = Math.min(Math.max(canvasCaptionY + 40, 100), canvas.height);
-
-  console.log('Final captureHeight:', captureHeight);
 
   // Create temp canvas and copy region
   const tempCanvas = document.createElement('canvas');

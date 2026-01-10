@@ -29,6 +29,7 @@ interface PdfViewerProps {
   onPageChange: (page: number) => void;
   onDocumentLoad: (numPages: number) => void;
   onStartRabbitHole: (selectedText: string, pageReference: number, parentId?: string, highlightPosition?: ScaledPosition) => void;
+  onStartFigureRabbitHole: (question: string, imageDataUrl: string, figureNumber: string, pageNumber: number) => void;
   savedRabbitHoles: SavedRabbitHole[];
   onDeleteRabbitHole: (rabbitHoleId: string) => void;
   onReopenRabbitHole: (rabbitHole: SavedRabbitHole) => void;
@@ -267,6 +268,7 @@ export function PdfViewer({
   onPageChange,
   onDocumentLoad,
   onStartRabbitHole,
+  onStartFigureRabbitHole,
   savedRabbitHoles,
   onDeleteRabbitHole,
   onReopenRabbitHole,
@@ -620,8 +622,10 @@ export function PdfViewer({
             imageDataUrl={hoveredFigure.figure.imageDataUrl}
             caption={hoveredFigure.figure.captionText}
             figureNumber={hoveredFigure.figure.figureNumber}
+            pageNumber={hoveredFigure.figure.pageNumber}
             position={hoveredFigure.position}
             onClose={() => setHoveredFigure(null)}
+            onAskAboutFigure={onStartFigureRabbitHole}
           />
         </div>
       )}

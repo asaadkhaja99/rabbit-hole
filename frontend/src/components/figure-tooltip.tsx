@@ -1,23 +1,43 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, Image, Send } from 'lucide-react';
 
 interface FigureTooltipProps {
   imageDataUrl: string;
   caption: string;
   figureNumber: string;
+  pageNumber: number;
   position: { x: number; y: number };
   onClose: () => void;
+  onAskAboutFigure: (question: string, imageDataUrl: string, figureNumber: string, pageNumber: number) => void;
 }
 
 export function FigureTooltip({
   imageDataUrl,
   caption,
   figureNumber,
+  pageNumber,
   position,
   onClose,
+  onAskAboutFigure,
 }: FigureTooltipProps) {
-  const initialWidth = 600;
-  const initialHeight = 500;
+  const [question, setQuestion] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleSend = () => {
+    if (!question.trim()) return;
+    onAskAboutFigure(question.trim(), imageDataUrl, figureNumber, pageNumber);
+    setQuestion('');
+    onClose();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+  const initialWidth = 510;  // 15% narrower than 600
+  const initialHeight = 350; // 30% shorter than 500
   const padding = 20;
 
   // Calculate initial position - place to the right of click, or left if no space
@@ -43,41 +63,50 @@ export function FigureTooltip({
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
   // Handle scroll to zoom centered on mouse position
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  // Use native event listener with { passive: false } to allow preventDefault
+  useEffect(() => {
     const container = imageContainerRef.current;
     if (!container) return;
 
-    // Get mouse position relative to container
-    const rect = container.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
 
-    // Current scroll position
-    const scrollLeft = container.scrollLeft;
-    const scrollTop = container.scrollTop;
+      // Get mouse position relative to container
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-    // Point in image space (accounting for current zoom and scroll)
-    const imageX = (scrollLeft + mouseX) / zoom;
-    const imageY = (scrollTop + mouseY) / zoom;
+      // Current scroll position
+      const scrollLeft = container.scrollLeft;
+      const scrollTop = container.scrollTop;
 
-    // Calculate new zoom
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    const newZoom = Math.max(0.5, Math.min(5, zoom + delta));
+      // Point in image space (accounting for current zoom and scroll)
+      const imageX = (scrollLeft + mouseX) / zoom;
+      const imageY = (scrollTop + mouseY) / zoom;
 
-    // Calculate new scroll position to keep mouse over same image point
-    const newScrollLeft = imageX * newZoom - mouseX;
-    const newScrollTop = imageY * newZoom - mouseY;
+      // Calculate new zoom
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const newZoom = Math.max(0.5, Math.min(5, zoom + delta));
 
-    setZoom(newZoom);
+      // Calculate new scroll position to keep mouse over same image point
+      const newScrollLeft = imageX * newZoom - mouseX;
+      const newScrollTop = imageY * newZoom - mouseY;
 
-    // Apply scroll after state update
-    requestAnimationFrame(() => {
-      container.scrollLeft = Math.max(0, newScrollLeft);
-      container.scrollTop = Math.max(0, newScrollTop);
-    });
+      setZoom(newZoom);
+
+      // Apply scroll after state update
+      requestAnimationFrame(() => {
+        container.scrollLeft = Math.max(0, newScrollLeft);
+        container.scrollTop = Math.max(0, newScrollTop);
+      });
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
   }, [zoom]);
 
   // Reset zoom on double click
@@ -127,7 +156,7 @@ export function FigureTooltip({
 
   return (
     <div
-      className="fixed bg-white rounded-lg shadow-2xl border border-slate-200 flex flex-col"
+      className="fixed bg-white rounded-lg shadow-2xl border border-slate-300 flex flex-col"
       style={{
         left: pos.left,
         top: pos.top,
@@ -144,23 +173,26 @@ export function FigureTooltip({
     >
       {/* Header - draggable */}
       <div
-        className="flex items-center justify-between px-3 py-2 bg-slate-100 border-b border-slate-200 flex-shrink-0 cursor-move select-none"
+        className="flex items-center justify-between px-4 py-3 bg-slate-800 text-white flex-shrink-0 cursor-move select-none rounded-t-lg"
         onMouseDown={handleMouseDown}
       >
-        <span className="text-sm font-medium text-slate-700">
-          Figure {figureNumber}
-        </span>
         <div className="flex items-center gap-2">
+          <Image className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+          <span className="text-sm font-medium">
+            Figure {figureNumber}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
           {zoom !== 1 && (
-            <span className="text-xs text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">
+            <span className="text-xs bg-slate-700 px-2 py-0.5 rounded">
               {Math.round(zoom * 100)}%
             </span>
           )}
           <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-200 rounded transition-colors"
+            className="p-1.5 hover:bg-slate-700 rounded transition-colors"
           >
-            <X className="w-3 h-3 text-slate-500" />
+            <X className="w-3.5 h-3.5" strokeWidth={1.5} />
           </button>
         </div>
       </div>
@@ -168,8 +200,7 @@ export function FigureTooltip({
       {/* Image - scrollable container with zoom */}
       <div
         ref={imageContainerRef}
-        className="flex-1 p-2 overflow-auto min-h-0 cursor-zoom-in"
-        onWheel={handleWheel}
+        className="flex-1 p-2 overflow-auto min-h-0 cursor-zoom-in bg-[#f9f9f9]"
         onDoubleClick={handleDoubleClick}
         title="Scroll to zoom, double-click to reset"
       >
@@ -195,6 +226,28 @@ export function FigureTooltip({
           </p>
         </div>
       )}
+
+      {/* Chat input - ask about this figure */}
+      <div className="px-3 py-2 border-t border-slate-200 flex-shrink-0 bg-white">
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about this figure..."
+            className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!question.trim()}
+            className="px-3 py-1.5 bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Send className="w-4 h-4" strokeWidth={1.5} />
+          </button>
+        </div>
+      </div>
 
       {/* Resize handle indicator */}
       <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize opacity-50 hover:opacity-100">

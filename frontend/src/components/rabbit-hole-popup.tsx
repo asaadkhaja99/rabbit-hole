@@ -179,7 +179,18 @@ export function RabbitHolePopup({
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <div className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                    <div className="text-sm leading-relaxed">
+                      {message.imageDataUrl && (
+                        <div className="mb-2 rounded overflow-hidden border border-slate-600">
+                          <img
+                            src={message.imageDataUrl}
+                            alt="Figure"
+                            className="max-w-full h-auto max-h-32 object-contain bg-white"
+                          />
+                        </div>
+                      )}
+                      <div className="whitespace-pre-wrap">{message.content}</div>
+                    </div>
                   )}
                   {message.pageReference && (
                     <div className="flex items-center gap-1 mt-1.5 text-xs opacity-60">

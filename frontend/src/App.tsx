@@ -75,6 +75,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   pageReference?: number;
+  imageDataUrl?: string;  // For figure images in conversations
 }
 
 // Re-export for use in other components
@@ -291,6 +292,125 @@ export default function App() {
       highlightPosition,
     };
     setRabbitHoleWindows(prev => [...prev, newWindow]);
+  };
+
+  const handleStartFigureRabbitHole = (question: string, imageDataUrl: string, figureNumber: string, pageNumber: number) => {
+    const id = Date.now().toString();
+    const topic = `Figure ${figureNumber}: ${question.substring(0, 30)}${question.length > 30 ? '...' : ''}`;
+
+    // Create user message with the image and question
+    const userMessage: Message = {
+      id: id + '_user',
+      role: 'user',
+      content: question,
+      timestamp: new Date(),
+      pageReference: pageNumber,
+      imageDataUrl,
+    };
+
+    // Create placeholder AI message for streaming
+    const aiMessageId = id + '_ai';
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      pageReference: pageNumber,
+    };
+
+    // Create and SAVE the rabbit hole immediately
+    const newSavedRabbitHole: SavedRabbitHole = {
+      id,
+      selectedText: `Figure ${figureNumber}`,
+      pageReference: pageNumber,
+      summary: 'Analyzing figure...',
+      messages: [userMessage, aiMessage],
+      rabbitHolePath: [topic],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setSavedRabbitHoles(prev => [...prev, newSavedRabbitHole]);
+
+    // Stack windows vertically on the right side
+    const existingCount = rabbitHoleWindows.length;
+    const yOffset = existingCount * 20;
+
+    // Create the UI window
+    const newWindow: RabbitHoleWindow = {
+      id,
+      selectedText: `Figure ${figureNumber}`,
+      topic,
+      pageReference: pageNumber,
+      position: { x: window.innerWidth - 420, y: 80 + yOffset },
+      size: { width: 400, height: 500 },
+      messages: [userMessage, aiMessage],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setRabbitHoleWindows(prev => [...prev, newWindow]);
+
+    // Start streaming response - include image context in the question
+    const contextWithImage = `[User is asking about Figure ${figureNumber} from the PDF]\n\nQuestion: ${question}`;
+
+    streamChat(
+      contextWithImage,
+      `Figure ${figureNumber}`,
+      pageNumber,
+      currentProject?.fileSearchStoreId,
+      [], // No history for new figure conversation
+      {
+        onChunk: (text) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+
+          setSavedRabbitHoles(prev =>
+            prev.map(c =>
+              c.id === id
+                ? {
+                    ...c,
+                    messages: c.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onComplete: () => {
+          console.log('Figure analysis complete');
+        },
+        onError: (error) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: `Error: ${error}. Please try again.` }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+        },
+      }
+    );
   };
 
   const handleCloseRabbitHole = (windowId: string) => {
@@ -633,6 +753,7 @@ export default function App() {
             onPageChange={setCurrentPage}
             onDocumentLoad={setNumPages}
             onStartRabbitHole={handleStartRabbitHole}
+            onStartFigureRabbitHole={handleStartFigureRabbitHole}
             savedRabbitHoles={savedRabbitHoles}
             onDeleteRabbitHole={handleDeleteRabbitHole}
             onReopenRabbitHole={handleReopenRabbitHole}
