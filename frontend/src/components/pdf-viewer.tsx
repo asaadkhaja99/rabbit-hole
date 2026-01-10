@@ -341,6 +341,7 @@ export function PdfViewer({
     isLoading?: boolean;
     summary?: ReferenceSummary;
   } | null>(null);
+  const isHoveringTooltipRef = useRef(false);
 
   // Clear selection tooltip when text is deselected
   useEffect(() => {
@@ -887,7 +888,10 @@ export function PdfViewer({
         if (hoverTimeout) clearTimeout(hoverTimeout);
         // Small delay before closing to allow moving to tooltip
         hoverTimeout = setTimeout(() => {
-          setHoveredCitation(null);
+          // Check if we're now hovering over the tooltip
+          if (!isHoveringTooltipRef.current) {
+            setHoveredCitation(null);
+          }
         }, 300);
       }
     };
@@ -1083,8 +1087,12 @@ export function PdfViewer({
           }}
           onMouseEnter={() => {
             // Keep tooltip open when hovering over it
+            isHoveringTooltipRef.current = true;
           }}
-          onMouseLeave={() => setHoveredCitation(null)}
+          onMouseLeave={() => {
+            isHoveringTooltipRef.current = false;
+            setHoveredCitation(null);
+          }}
         >
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs font-mono bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
@@ -1130,9 +1138,23 @@ export function PdfViewer({
 
           <button
             onClick={handleStartReferenceRabbitHoleFromHover}
-            className="w-full py-1.5 px-2 bg-emerald-600 text-white text-sm rounded hover:bg-emerald-700 flex items-center justify-center gap-1.5 transition-colors"
+            style={{
+              width: '100%',
+              padding: '8px 12px',
+              backgroundColor: '#9333ea',
+              color: 'white',
+              fontSize: '14px',
+              fontWeight: 500,
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
           >
-            <Rabbit className="w-3.5 h-3.5" strokeWidth={1.5} />
+            <Rabbit style={{ width: 16, height: 16 }} />
             Start Rabbit Hole
           </button>
         </div>

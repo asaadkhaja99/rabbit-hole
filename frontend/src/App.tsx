@@ -417,7 +417,7 @@ export default function App() {
     const id = Date.now().toString();
     const topic = `Ref ${info.citationKey}: ${info.referenceTitle.substring(0, 40)}${info.referenceTitle.length > 40 ? '...' : ''}`;
 
-    // Build the pre-built prompt for reference analysis
+    // Build the pre-built prompt for reference analysis (sent to API, not shown to user)
     const prompt = `I'm reading a paper and encountered reference ${info.citationKey}.
 
 **Current Context (paragraph containing the citation):**
@@ -436,11 +436,14 @@ ${info.referenceYear ? `- Year: ${info.referenceYear}` : ''}
 
 Use the full paper context from my uploaded PDF to provide accurate analysis.`;
 
-    // Create user message with the prompt
+    // Simple display message shown to user
+    const displayText = `Understanding the relevance of reference ${info.citationKey}...`;
+
+    // Create user message with simple display text (full prompt sent separately to API)
     const userMessage: Message = {
       id: id + '_user',
       role: 'user',
-      content: prompt,
+      content: displayText,
       timestamp: new Date(),
       pageReference: info.pageNumber,
     };
