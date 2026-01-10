@@ -40,6 +40,16 @@ class EquationRequest(BaseModel):
     page: Optional[int] = None
 
 
+class EquationAnnotationRequest(BaseModel):
+    image_base64: str
+    question: str
+    aspect_ratio: float
+
+
+class EquationAnnotationResponse(BaseModel):
+    image_base64: str
+
+
 class LearningPlanRequest(BaseModel):
     title: str
     abstract: str

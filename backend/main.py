@@ -1,7 +1,10 @@
 import asyncio
+import base64
+import io
 import json
 import os
 import time
+import traceback
 import yaml
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -22,6 +25,8 @@ from models import (
     PDFListResponse,
     FigureRequest,
     EquationRequest,
+    EquationAnnotationRequest,
+    EquationAnnotationResponse,
     LearningPlanRequest,
     LearningPlanResponse,
     ChatRequest,
@@ -43,6 +48,10 @@ CHAT_SYSTEM_PROMPT = prompts["chat"]["system_prompt"]
 FORMULA_SYSTEM_PROMPT = prompts["formula"]["system_prompt"]
 FIGURE_SYSTEM_PROMPT = prompts["figure"]["system_prompt"]
 LEARNING_PLAN_PROMPT_TEMPLATE = prompts["learning_plan"]["prompt_template"]
+EQUATION_ANNOTATION_SYSTEM_PROMPT = (
+    "Create an image that repreoeduces the equation image exactlty but with annotations "
+    "in handwritten ink that explain the equation according the question asked"
+)
 
 # Note: Jobs are now persisted in jobs_storage (from storage.py)
 # No need for in-memory jobs dictionary
@@ -458,6 +467,111 @@ async def equation_explain(request: EquationRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.post("/api/equation/annotate", response_model=EquationAnnotationResponse)
+async def equation_annotate(request: EquationAnnotationRequest):
+    """
+    Generate an annotated equation image based on the user's question.
+    """
+    if not request.image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 is required")
+    if not request.question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    try:
+        try:
+            image_bytes = base64.b64decode(request.image_base64)
+        except Exception:
+            image_bytes = request.image_base64.encode() if isinstance(request.image_base64, str) else request.image_base64
+
+        # Convert aspect ratio to Gemini format (closest match)
+        # Use smaller sizes for faster generation - frontend will scale up
+        aspect_ratio_str = "1:1"  # default
+        ratio = request.aspect_ratio
+        if ratio > 2.2:
+            aspect_ratio_str = "16:9"  # Use 16:9 instead of 21:9 for faster generation
+        elif ratio > 1.5:
+            aspect_ratio_str = "4:3"   # Simplified to 4:3 for medium wide
+        elif ratio > 0.9:
+            aspect_ratio_str = "1:1"
+        elif ratio > 0.6:
+            aspect_ratio_str = "3:4"   # Simplified for medium tall
+        else:
+            aspect_ratio_str = "9:16"
+
+        contents = [
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type="image/png"
+            ),
+            types.Part.from_text(text=f"Question: {request.question}")
+        ]
+
+        response = client.models.generate_content(
+            model="gemini-3-pro-image-preview",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=EQUATION_ANNOTATION_SYSTEM_PROMPT,
+                temperature=0.2,
+                response_modalities=["Text", "Image"],
+                image_config=types.ImageConfig(
+                    aspect_ratio=aspect_ratio_str,
+                ),
+            )
+        )
+
+        # Debug logging
+        print("Response type:", type(response))
+        print("Response dir:", [attr for attr in dir(response) if not attr.startswith('_')])
+
+        image_base64 = None
+
+        # Try to get parts from response
+        parts = getattr(response, "parts", None)
+        print("Direct parts:", parts)
+
+        if not parts and getattr(response, "candidates", None):
+            print("Trying candidates...")
+            parts = response.candidates[0].content.parts
+            print("Candidate parts:", parts)
+
+        if parts:
+            print(f"Found {len(parts)} parts")
+            for i, part in enumerate(parts):
+                print(f"Part {i} type:", type(part))
+                print(f"Part {i} dir:", [attr for attr in dir(part) if not attr.startswith('_')])
+
+                # Try inline_data for image
+                if hasattr(part, "inline_data") and part.inline_data:
+                    print(f"Part {i} has inline_data")
+                    image_data = part.inline_data.data
+                    if image_data:
+                        image_base64 = base64.b64encode(image_data).decode("utf-8")
+                        print("Got image from inline_data")
+                        break
+
+                # Try as_image method
+                if hasattr(part, "as_image"):
+                    print(f"Part {i} has as_image method")
+                    image = part.as_image()
+                    if image:
+                        buffer = io.BytesIO()
+                        image.save(buffer, format="PNG")
+                        image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                        print("Got image from as_image")
+                        break
+
+        if not image_base64:
+            raise HTTPException(status_code=500, detail="No image returned from model")
+
+        return EquationAnnotationResponse(image_base64=image_base64)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("Equation annotate error:", e)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/learning-plan/generate", response_model=LearningPlanResponse)

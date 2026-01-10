@@ -49,6 +49,7 @@ interface PdfViewerProps {
     id: string;
     bounds: { left: number; top: number; width: number; height: number };
     pageNumber: number;
+    imageDataUrl?: string;
   }>;
 }
 
@@ -334,6 +335,9 @@ export function PdfViewer({
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const annotationOverlayRef = useRef<HTMLDivElement | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
+
+  // Track which equation images are visible (toggled on/off by clicking)
+  const [visibleEquationImages, setVisibleEquationImages] = useState<Set<string>>(new Set());
 
   // Clear selection tooltip when text is deselected
   useEffect(() => {
@@ -886,11 +890,65 @@ export function PdfViewer({
       rect.style.width = `${equation.bounds.width}px`;
       rect.style.height = `${equation.bounds.height}px`;
       rect.style.border = '2px solid #16a34a';
-      rect.style.background = 'rgba(34, 197, 94, 0.2)';
-      rect.style.pointerEvents = 'none';
+      rect.style.background = equation.imageDataUrl ? 'transparent' : 'rgba(34, 197, 94, 0.2)';
+      rect.style.pointerEvents = equation.imageDataUrl ? 'auto' : 'none';
+      rect.style.cursor = equation.imageDataUrl ? 'pointer' : 'default';
+
+      // Add click handler to toggle image visibility
+      if (equation.imageDataUrl) {
+        rect.addEventListener('click', () => {
+          setVisibleEquationImages(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(equation.id)) {
+              newSet.delete(equation.id);
+            } else {
+              newSet.add(equation.id);
+            }
+            return newSet;
+          });
+        });
+      }
+
       overlay.appendChild(rect);
+
+      // Only render image if it's in the visible set
+      if (equation.imageDataUrl && visibleEquationImages.has(equation.id)) {
+        // Get page dimensions to calculate minimum size (1/3 of page width)
+        const viewer = highlighterUtilsRef.current?.getViewer();
+        const pageEl = viewer?.container.querySelector(`[data-page-number="${equation.pageNumber}"]`) as HTMLElement;
+        const pageWidth = pageEl ? pageEl.offsetWidth : 800; // fallback to 800px
+        const minWidth = pageWidth / 3;
+
+        // Calculate display size - scale up to minimum width while maintaining aspect ratio
+        let displayWidth = equation.bounds.width;
+        let displayHeight = equation.bounds.height;
+
+        if (displayWidth < minWidth) {
+          const scaleFactor = minWidth / displayWidth;
+          displayWidth = minWidth;
+          displayHeight = displayHeight * scaleFactor;
+        }
+
+        // Center the scaled image on the original selection
+        const offsetX = (displayWidth - equation.bounds.width) / 2;
+        const offsetY = (displayHeight - equation.bounds.height) / 2;
+
+        const image = document.createElement('img');
+        image.src = equation.imageDataUrl;
+        image.style.position = 'absolute';
+        image.style.left = `${equation.bounds.left - offsetX}px`;
+        image.style.top = `${equation.bounds.top - offsetY}px`;
+        image.style.width = `${displayWidth}px`;
+        image.style.height = `${displayHeight}px`;
+        image.style.objectFit = 'contain';
+        image.style.pointerEvents = 'none';
+        image.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+        image.style.background = 'white';
+        image.style.zIndex = '10';
+        overlay.appendChild(image);
+      }
     });
-  }, [equationAnnotations, persistedEquations, onStartEquationRabbitHole, viewerReady]);
+  }, [equationAnnotations, persistedEquations, onStartEquationRabbitHole, viewerReady, visibleEquationImages]);
 
   // Equation annotation drawing handlers - using global mouse events for reliability
   useEffect(() => {

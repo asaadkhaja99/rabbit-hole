@@ -6,7 +6,7 @@ import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { uploadPdf, streamChat, ChatMessage } from './api';
+import { uploadPdf, streamChat, ChatMessage, generateEquationAnnotationImage } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -146,6 +146,7 @@ export default function App() {
     id: string;
     bounds: { left: number; top: number; width: number; height: number };
     pageNumber: number;
+    imageDataUrl?: string;
   }>>([]);
 
   // Load projects from localStorage on mount and restore current project
@@ -444,7 +445,6 @@ export default function App() {
     bounds: { left: number; top: number; width: number; height: number }
   ) => {
     const id = Date.now().toString();
-    const topic = `Equation ${equationNumber}: ${question.substring(0, 30)}${question.length > 30 ? '...' : ''}`;
 
     // Add to persisted equations so it shows on the PDF
     setPersistedEquations(prev => [...prev, {
@@ -453,119 +453,21 @@ export default function App() {
       pageNumber,
     }]);
 
-    // Create user message with the image and question
-    const userMessage: Message = {
-      id: id + '_user',
-      role: 'user',
-      content: question,
-      timestamp: new Date(),
-      pageReference: pageNumber,
-      imageDataUrl,
-    };
+    // Calculate aspect ratio from bounds (width:height)
+    const aspectRatio = bounds.width / bounds.height;
 
-    // Create placeholder AI message for streaming
-    const aiMessageId = id + '_ai';
-    const aiMessage: Message = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-      pageReference: pageNumber,
-    };
-
-    // Create and SAVE the rabbit hole immediately
-    const newSavedRabbitHole: SavedRabbitHole = {
-      id,
-      selectedText: `Equation ${equationNumber}`,
-      pageReference: pageNumber,
-      summary: 'Analyzing equation...',
-      messages: [userMessage, aiMessage],
-      rabbitHolePath: [topic],
-      timestamp: new Date(),
-      depth: 0,
-    };
-    setSavedRabbitHoles(prev => [...prev, newSavedRabbitHole]);
-
-    // Stack windows vertically on the right side
-    const existingCount = rabbitHoleWindows.length;
-    const yOffset = existingCount * 20;
-
-    // Create the UI window
-    const newWindow: RabbitHoleWindow = {
-      id,
-      selectedText: `Equation ${equationNumber}`,
-      topic,
-      pageReference: pageNumber,
-      position: { x: window.innerWidth - 420, y: 80 + yOffset },
-      size: { width: 400, height: 500 },
-      messages: [userMessage, aiMessage],
-      timestamp: new Date(),
-      depth: 0,
-    };
-    setRabbitHoleWindows(prev => [...prev, newWindow]);
-
-    // Start streaming response - include image context in the question
-    const contextWithImage = `[User is asking about Equation ${equationNumber} from the PDF]\n\nQuestion: ${question}`;
-
-    streamChat(
-      contextWithImage,
-      `Equation ${equationNumber}`,
-      pageNumber,
-      currentProject?.fileSearchStoreId,
-      [], // No history for new equation conversation
-      {
-        onChunk: (text) => {
-          setRabbitHoleWindows(prev =>
-            prev.map(w =>
-              w.id === id
-                ? {
-                    ...w,
-                    messages: w.messages.map(m =>
-                      m.id === aiMessageId
-                        ? { ...m, content: m.content + text }
-                        : m
-                    ),
-                  }
-                : w
-            )
-          );
-
-          setSavedRabbitHoles(prev =>
-            prev.map(c =>
-              c.id === id
-                ? {
-                    ...c,
-                    messages: c.messages.map(m =>
-                      m.id === aiMessageId
-                        ? { ...m, content: m.content + text }
-                        : m
-                    ),
-                  }
-                : c
-            )
-          );
-        },
-        onComplete: () => {
-          console.log('Equation analysis complete');
-        },
-        onError: (error) => {
-          setRabbitHoleWindows(prev =>
-            prev.map(w =>
-              w.id === id
-                ? {
-                    ...w,
-                    messages: w.messages.map(m =>
-                      m.id === aiMessageId
-                        ? { ...m, content: `Error: ${error}. Please try again.` }
-                        : m
-                    ),
-                  }
-                : w
-            )
-          );
-        },
-      }
-    );
+    const toastId = toast.loading('Processing equation...');
+    generateEquationAnnotationImage(imageDataUrl, question, aspectRatio)
+      .then((annotatedImageDataUrl) => {
+        setPersistedEquations(prev =>
+          prev.map(eq => (eq.id === id ? { ...eq, imageDataUrl: annotatedImageDataUrl } : eq))
+        );
+        toast.success('Equation processed', { id: toastId });
+      })
+      .catch((error) => {
+        console.error('Failed to generate annotated equation image:', error);
+        toast.error('Failed to process equation', { id: toastId });
+      });
   };
 
   const handleCloseRabbitHole = (windowId: string) => {

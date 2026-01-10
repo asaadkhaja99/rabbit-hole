@@ -165,7 +165,7 @@ export function Toolbar({
                 onClick={onToggleEquationMode}
                 className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors text-sm ${
                   isEquationMode
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-purple-600 text-white'
                     : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'
                 }`}
                 title={isEquationMode ? 'Exit equation mode' : 'Annotate equations'}
