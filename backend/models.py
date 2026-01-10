@@ -69,3 +69,19 @@ class ReferenceSummaryResponse(BaseModel):
     authors: str
     year: Optional[int] = None
     summary: str
+
+
+class RabbitHoleData(BaseModel):
+    id: str
+    topic: str
+    selectedText: str
+    messages: list[dict]
+    pageReference: Optional[int] = None
+
+
+class LearningSummarizeRequest(BaseModel):
+    rabbit_holes: list[RabbitHoleData]
+
+
+class LearningSummaryResponse(BaseModel):
+    summary: str

@@ -26,6 +26,8 @@ from models import (
     ChatRequest,
     ReferenceSummarizeRequest,
     ReferenceSummaryResponse,
+    LearningSummarizeRequest,
+    LearningSummaryResponse,
 )
 from storage import pdf_storage, jobs_storage
 
@@ -471,6 +473,67 @@ If you cannot determine a field, use reasonable defaults:
     except Exception as e:
         print(f"Error in summarize_reference: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to summarize reference: {str(e)}")
+
+
+@app.post("/api/learning/summarize", response_model=LearningSummaryResponse)
+async def summarize_learning(request: LearningSummarizeRequest):
+    """
+    Generate a learning summary based on all rabbit hole conversations.
+    Analyzes which topics the user explored, what they found interesting or unfamiliar.
+    """
+    if not request.rabbit_holes:
+        raise HTTPException(status_code=400, detail="No rabbit holes provided")
+
+    try:
+        # Format rabbit hole data for the prompt
+        rabbit_hole_summaries = []
+        for rh in request.rabbit_holes:
+            messages_text = "\n".join([
+                f"  {m['role'].upper()}: {m['content'][:500]}{'...' if len(m['content']) > 500 else ''}"
+                for m in rh.messages
+            ])
+            rabbit_hole_summaries.append(f"""
+Topic: {rh.topic}
+Page: {rh.pageReference or 'N/A'}
+Context: {rh.selectedText[:200]}{'...' if len(rh.selectedText) > 200 else ''}
+Conversation:
+{messages_text}
+""")
+
+        all_holes = "\n---\n".join(rabbit_hole_summaries)
+
+        prompt = f"""You are analyzing a reader's learning journey through an academic paper. Based on their rabbit hole explorations (questions they asked about different parts of the paper), create a personalized learning summary.
+
+Here are all the rabbit holes the reader explored:
+{all_holes}
+
+Please provide a comprehensive learning summary that includes:
+
+1. **Topics Explored**: What concepts/topics did the reader dive deep into?
+
+2. **Areas of Interest**: Based on their questions, what seems to genuinely interest them?
+
+3. **Knowledge Gaps**: What concepts seemed unfamiliar or challenging to them? (based on the types of questions asked)
+
+4. **Key Takeaways**: What are the main things they likely learned from this paper?
+
+5. **Recommended Next Steps**: Based on their interests and gaps, what should they explore next?
+
+Write in a friendly, encouraging tone. Be specific about the paper content they explored."""
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+            )
+        )
+
+        return LearningSummaryResponse(summary=response.text)
+
+    except Exception as e:
+        print(f"Error in summarize_learning: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate learning summary: {str(e)}")
 
 
 @app.post("/api/learning-plan/generate", response_model=LearningPlanResponse)

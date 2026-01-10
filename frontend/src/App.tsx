@@ -6,7 +6,7 @@ import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { uploadPdf, streamChat, ChatMessage } from './api';
+import { uploadPdf, streamChat, ChatMessage, generateLearningSummary } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -124,6 +124,8 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const [isResizeHovered, setIsResizeHovered] = useState(false);
   const [scrollToHighlightId, setScrollToHighlightId] = useState<string | null>(null);
+  const [learningSummary, setLearningSummary] = useState<string | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
 
   // Load projects from localStorage on mount and restore current project
   useEffect(() => {
@@ -240,6 +242,7 @@ export default function App() {
     const url = URL.createObjectURL(file);
     setPdfFile(url);
     setCurrentPage(1);
+    setLearningSummary(null);  // Reset summary for new PDF
   };
 
   const handleStartRabbitHole = (selectedText: string, pageReference: number, parentId?: string, highlightPosition?: ScaledPosition) => {
@@ -796,6 +799,7 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
     setPdfFile(pdfUrl);
     setCurrentPage(1);
     setRabbitHoleWindows([]);
+    setLearningSummary(null);  // Reset summary for new project
   };
 
   const handleDeleteProject = async (projectId: string) => {
@@ -817,6 +821,7 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
     setPdfFile(null);
     setSavedRabbitHoles([]);
     setRabbitHoleWindows([]);
+    setLearningSummary(null);  // Reset summary when leaving project
   };
 
   const handleProjectNameChange = (newName: string) => {
@@ -849,6 +854,38 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
         setScrollToHighlightId(`rabbithole-${rabbitHole.id}`);
       }
       setShowRabbitHoleGraph(false);
+    }
+  };
+
+  // Generate learning summary from all rabbit holes
+  const handleGenerateSummary = async () => {
+    if (savedRabbitHoles.length === 0) {
+      toast.error('No rabbit holes to summarize');
+      return;
+    }
+
+    setIsSummarizing(true);
+    try {
+      // Prepare rabbit hole data for summarization
+      const rabbitHoleData = savedRabbitHoles.map(rh => ({
+        id: rh.id,
+        topic: rh.rabbitHolePath?.[0] || rh.selectedText.substring(0, 50),
+        selectedText: rh.selectedText,
+        messages: rh.messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+        pageReference: rh.pageReference,
+      }));
+
+      const response = await generateLearningSummary(rabbitHoleData);
+      setLearningSummary(response.summary);
+      toast.success('Learning summary generated!');
+    } catch (error) {
+      console.error('Failed to generate summary:', error);
+      toast.error('Failed to generate learning summary');
+    } finally {
+      setIsSummarizing(false);
     }
   };
 
@@ -972,6 +1009,9 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
           savedRabbitHoles={savedRabbitHoles}
           onClose={() => setShowRabbitHoleGraph(false)}
           onNodeClick={handleMapNodeClick}
+          learningSummary={learningSummary || undefined}
+          onGenerateSummary={handleGenerateSummary}
+          isSummarizing={isSummarizing}
         />
       )}
 

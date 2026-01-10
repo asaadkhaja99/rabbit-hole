@@ -121,3 +121,41 @@ export async function streamChat(
     callbacks.onError(error instanceof Error ? error.message : 'Unknown error');
   }
 }
+
+export interface RabbitHoleSummaryData {
+  id: string;
+  topic: string;
+  selectedText: string;
+  messages: Array<{ role: string; content: string }>;
+  pageReference?: number;
+}
+
+export interface LearningSummaryResponse {
+  summary: string;
+}
+
+/**
+ * Generate a learning summary based on all rabbit hole conversations
+ */
+export async function generateLearningSummary(
+  rabbitHoles: RabbitHoleSummaryData[]
+): Promise<LearningSummaryResponse> {
+  try {
+    const response = await fetch('/api/learning/summarize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ rabbit_holes: rabbitHoles }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to generate learning summary:', error);
+    throw error;
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import {
   ReactFlow,
   useNodesState,
@@ -10,7 +10,8 @@ import {
   type Node,
   type Edge,
 } from '@xyflow/react';
-import { X, Rabbit, FileText } from 'lucide-react';
+import { X, Rabbit, FileText, Sparkles, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { RabbitHoleWindow, SavedRabbitHole } from '../App';
 import '@xyflow/react/dist/style.css';
 
@@ -19,6 +20,9 @@ interface RabbitHoleGraphProps {
   savedRabbitHoles: SavedRabbitHole[];
   onClose: () => void;
   onNodeClick?: (nodeId: string) => void;
+  learningSummary?: string;
+  onGenerateSummary?: () => Promise<void>;
+  isSummarizing?: boolean;
 }
 
 // Custom node for rabbit holes (active)
@@ -238,7 +242,11 @@ export function RabbitHoleGraph({
   savedRabbitHoles,
   onClose,
   onNodeClick,
+  learningSummary,
+  onGenerateSummary,
+  isSummarizing,
 }: RabbitHoleGraphProps) {
+  const [showSummary, setShowSummary] = useState(false);
   // Build initial nodes and edges
   const { initialNodes, initialEdges } = useMemo(() => {
     const nodes: Node[] = [];
@@ -368,13 +376,101 @@ export function RabbitHoleGraph({
             </span>
           </div>
 
-          <button
-            onClick={onClose}
-            style={{ padding: '8px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer' }}
-          >
-            <X style={{ width: 20, height: 20, color: '#64748b' }} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* Summarize button */}
+            <button
+              onClick={async () => {
+                if (learningSummary) {
+                  setShowSummary(!showSummary);
+                } else if (onGenerateSummary) {
+                  await onGenerateSummary();
+                  setShowSummary(true);
+                }
+              }}
+              disabled={isSummarizing}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                background: learningSummary ? '#f0fdf4' : 'linear-gradient(135deg, #9333ea 0%, #7c3aed 100%)',
+                color: learningSummary ? '#166534' : 'white',
+                cursor: isSummarizing ? 'wait' : 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                opacity: isSummarizing ? 0.7 : 1,
+              }}
+            >
+              {isSummarizing ? (
+                <>
+                  <Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} />
+                  Summarizing...
+                </>
+              ) : (
+                <>
+                  <Sparkles style={{ width: 16, height: 16 }} />
+                  {learningSummary ? (showSummary ? 'Hide Summary' : 'View Summary') : 'Summarize Learning'}
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={onClose}
+              style={{ padding: '8px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer' }}
+            >
+              <X style={{ width: 20, height: 20, color: '#64748b' }} />
+            </button>
+          </div>
         </div>
+
+        {/* Summary panel */}
+        {showSummary && learningSummary && (
+          <div
+            style={{
+              padding: '16px 24px',
+              backgroundColor: '#faf5ff',
+              borderBottom: '1px solid #e9d5ff',
+              height: '60vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <Sparkles style={{ width: 20, height: 20, color: '#9333ea', flexShrink: 0, marginTop: '2px' }} />
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: 600, color: '#7c3aed' }}>
+                  Learning Summary
+                </h3>
+                <div
+                  className="prose prose-sm max-w-none"
+                  style={{
+                    fontSize: '14px',
+                    lineHeight: 1.7,
+                    color: '#4c1d95',
+                  }}
+                >
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => <h1 style={{ fontSize: '18px', fontWeight: 700, marginTop: '16px', marginBottom: '8px', color: '#5b21b6' }}>{children}</h1>,
+                      h2: ({ children }) => <h2 style={{ fontSize: '16px', fontWeight: 600, marginTop: '14px', marginBottom: '6px', color: '#6d28d9' }}>{children}</h2>,
+                      h3: ({ children }) => <h3 style={{ fontSize: '15px', fontWeight: 600, marginTop: '12px', marginBottom: '4px', color: '#7c3aed' }}>{children}</h3>,
+                      p: ({ children }) => <p style={{ marginBottom: '10px' }}>{children}</p>,
+                      ul: ({ children }) => <ul style={{ marginLeft: '20px', marginBottom: '10px', listStyleType: 'disc' }}>{children}</ul>,
+                      ol: ({ children }) => <ol style={{ marginLeft: '20px', marginBottom: '10px', listStyleType: 'decimal' }}>{children}</ol>,
+                      li: ({ children }) => <li style={{ marginBottom: '4px' }}>{children}</li>,
+                      strong: ({ children }) => <strong style={{ fontWeight: 600, color: '#5b21b6' }}>{children}</strong>,
+                      em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+                      code: ({ children }) => <code style={{ backgroundColor: '#ede9fe', padding: '2px 6px', borderRadius: '4px', fontSize: '13px' }}>{children}</code>,
+                    }}
+                  >
+                    {learningSummary}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Graph container - MUST have explicit height */}
         <div style={{ flex: 1, minHeight: 0, height: '100%', position: 'relative' }}>
