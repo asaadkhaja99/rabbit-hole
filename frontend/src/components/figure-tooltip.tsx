@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { X, GripHorizontal } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface FigureTooltipProps {
   imageDataUrl: string;
@@ -38,7 +38,57 @@ export function FigureTooltip({
 
   const [pos, setPos] = useState(getInitialPosition);
   const [isDragging, setIsDragging] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+
+  // Handle scroll to zoom centered on mouse position
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const container = imageContainerRef.current;
+    if (!container) return;
+
+    // Get mouse position relative to container
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Current scroll position
+    const scrollLeft = container.scrollLeft;
+    const scrollTop = container.scrollTop;
+
+    // Point in image space (accounting for current zoom and scroll)
+    const imageX = (scrollLeft + mouseX) / zoom;
+    const imageY = (scrollTop + mouseY) / zoom;
+
+    // Calculate new zoom
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    const newZoom = Math.max(0.5, Math.min(5, zoom + delta));
+
+    // Calculate new scroll position to keep mouse over same image point
+    const newScrollLeft = imageX * newZoom - mouseX;
+    const newScrollTop = imageY * newZoom - mouseY;
+
+    setZoom(newZoom);
+
+    // Apply scroll after state update
+    requestAnimationFrame(() => {
+      container.scrollLeft = Math.max(0, newScrollLeft);
+      container.scrollTop = Math.max(0, newScrollTop);
+    });
+  }, [zoom]);
+
+  // Reset zoom on double click
+  const handleDoubleClick = useCallback(() => {
+    setZoom(1);
+    const container = imageContainerRef.current;
+    if (container) {
+      container.scrollLeft = 0;
+      container.scrollTop = 0;
+    }
+  }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Only drag from header, not from close button
@@ -100,21 +150,40 @@ export function FigureTooltip({
         <span className="text-sm font-medium text-slate-700">
           Figure {figureNumber}
         </span>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-slate-200 rounded transition-colors"
-        >
-          <X className="w-3 h-3 text-slate-500" />
-        </button>
+        <div className="flex items-center gap-2">
+          {zoom !== 1 && (
+            <span className="text-xs text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">
+              {Math.round(zoom * 100)}%
+            </span>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-slate-200 rounded transition-colors"
+          >
+            <X className="w-3 h-3 text-slate-500" />
+          </button>
+        </div>
       </div>
 
-      {/* Image - scrollable container */}
-      <div className="flex-1 p-2 overflow-auto min-h-0">
+      {/* Image - scrollable container with zoom */}
+      <div
+        ref={imageContainerRef}
+        className="flex-1 p-2 overflow-auto min-h-0 cursor-zoom-in"
+        onWheel={handleWheel}
+        onDoubleClick={handleDoubleClick}
+        title="Scroll to zoom, double-click to reset"
+      >
         <img
           src={imageDataUrl}
           alt={`Figure ${figureNumber}`}
-          className="w-full h-auto rounded"
-          style={{ minWidth: '100%' }}
+          className="rounded transition-transform duration-100"
+          style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
+            width: '100%',
+            height: 'auto',
+          }}
+          draggable={false}
         />
       </div>
 
