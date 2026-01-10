@@ -6,7 +6,7 @@ import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { uploadPdf, streamChat, ChatMessage, generateLearningSummary } from './api';
+import { uploadPdf, streamChat, ChatMessage, generateLearningSummary, generateEquationAnnotationImage } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -17,7 +17,24 @@ const STORE_NAME = 'pdfs';
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
+    request.onerror = (event) => {
+      const error = (event.target as IDBOpenDBRequest).error;
+      // If version error, delete the database and retry
+      if (error?.name === 'VersionError') {
+        indexedDB.deleteDatabase(DB_NAME);
+        const retryRequest = indexedDB.open(DB_NAME, DB_VERSION);
+        retryRequest.onerror = () => reject(retryRequest.error);
+        retryRequest.onsuccess = () => resolve(retryRequest.result);
+        retryRequest.onupgradeneeded = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+      } else {
+        reject(error);
+      }
+    };
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -126,6 +143,13 @@ export default function App() {
   const [scrollToHighlightId, setScrollToHighlightId] = useState<string | null>(null);
   const [learningSummary, setLearningSummary] = useState<string | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isEquationMode, setIsEquationMode] = useState(false);
+  const [persistedEquations, setPersistedEquations] = useState<Array<{
+    id: string;
+    bounds: { left: number; top: number; width: number; height: number };
+    pageNumber: number;
+    imageDataUrl?: string;
+  }>>([]);
 
   // Load projects from localStorage on mount and restore current project
   useEffect(() => {
@@ -554,6 +578,39 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
     );
   };
 
+  const handleStartEquationRabbitHole = (
+    question: string,
+    imageDataUrl: string,
+    equationNumber: string,
+    pageNumber: number,
+    bounds: { left: number; top: number; width: number; height: number }
+  ) => {
+    const id = Date.now().toString();
+
+    // Add to persisted equations so it shows on the PDF
+    setPersistedEquations(prev => [...prev, {
+      id,
+      bounds,
+      pageNumber,
+    }]);
+
+    // Calculate aspect ratio from bounds (width:height)
+    const aspectRatio = bounds.width / bounds.height;
+
+    const toastId = toast.loading('Processing equation...');
+    generateEquationAnnotationImage(imageDataUrl, question, aspectRatio)
+      .then((annotatedImageDataUrl) => {
+        setPersistedEquations(prev =>
+          prev.map(eq => (eq.id === id ? { ...eq, imageDataUrl: annotatedImageDataUrl } : eq))
+        );
+        toast.success('Equation processed', { id: toastId });
+      })
+      .catch((error) => {
+        console.error('Failed to generate annotated equation image:', error);
+        toast.error('Failed to process equation', { id: toastId });
+      });
+  };
+
   const handleCloseRabbitHole = (windowId: string) => {
     const window = rabbitHoleWindows.find(w => w.id === windowId);
     if (!window) return;
@@ -916,6 +973,8 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         zoomLevel={zoomLevel}
+        onToggleEquationMode={() => setIsEquationMode(!isEquationMode)}
+        isEquationMode={isEquationMode}
       />
       
       <div className="flex flex-1 overflow-hidden">
@@ -930,6 +989,7 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
             onStartRabbitHole={handleStartRabbitHole}
             onStartFigureRabbitHole={handleStartFigureRabbitHole}
             onStartReferenceRabbitHole={handleStartReferenceRabbitHole}
+            onStartEquationRabbitHole={handleStartEquationRabbitHole}
             savedRabbitHoles={savedRabbitHoles}
             onDeleteRabbitHole={handleDeleteRabbitHole}
             onReopenRabbitHole={handleReopenRabbitHole}
@@ -939,6 +999,8 @@ Use the full paper context from my uploaded PDF to provide accurate analysis.`;
             onZoomOut={handleZoomOut}
             scrollToHighlightId={scrollToHighlightId}
             onScrollComplete={() => setScrollToHighlightId(null)}
+            isEquationMode={isEquationMode}
+            persistedEquations={persistedEquations}
           />
         </div>
       </div>

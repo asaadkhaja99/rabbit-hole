@@ -33,6 +33,23 @@ class FigureRequest(BaseModel):
     page: Optional[int] = None
 
 
+class EquationRequest(BaseModel):
+    image_base64: str
+    label: Optional[str] = None
+    context: Optional[str] = None
+    page: Optional[int] = None
+
+
+class EquationAnnotationRequest(BaseModel):
+    image_base64: str
+    question: str
+    aspect_ratio: float
+
+
+class EquationAnnotationResponse(BaseModel):
+    image_base64: str
+
+
 class LearningPlanRequest(BaseModel):
     title: str
     abstract: str
