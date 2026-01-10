@@ -6,7 +6,7 @@ import {
   AreaHighlight,
   useHighlightContainerContext,
 } from 'react-pdf-highlighter-extended';
-import type { Highlight, PdfSelection, ScaledPosition, PdfHighlighterUtils } from 'react-pdf-highlighter-extended';
+import type { Highlight, PdfSelection, ScaledPosition, PdfHighlighterUtils, PDFDocumentProxy } from 'react-pdf-highlighter-extended';
 import { FileQuestion, Rabbit } from 'lucide-react';
 import { SavedRabbitHole, RabbitHoleWindow } from '../App';
 import { HighlightMarkers } from './highlight-markers';
@@ -171,6 +171,55 @@ function SelectionTooltip({
   );
 }
 
+// Wrapper component to properly handle document load via useEffect
+function PdfHighlighterWrapper({
+  pdfDocument,
+  numPages,
+  onDocumentLoad,
+  highlights,
+  onSelection,
+  highlighterUtilsRef,
+  zoomLevel,
+  savedRabbitHoles,
+  onReopenRabbitHole,
+}: {
+  pdfDocument: PDFDocumentProxy;
+  numPages: number | null;
+  onDocumentLoad: (numPages: number) => void;
+  highlights: AppHighlight[];
+  onSelection: (selection: PdfSelection) => void;
+  highlighterUtilsRef: React.MutableRefObject<PdfHighlighterUtils | undefined>;
+  zoomLevel: number;
+  savedRabbitHoles: SavedRabbitHole[];
+  onReopenRabbitHole: (rabbitHole: SavedRabbitHole) => void;
+}) {
+  // Update numPages when document loads - using useEffect to avoid setState during render
+  useEffect(() => {
+    if (pdfDocument.numPages !== numPages) {
+      onDocumentLoad(pdfDocument.numPages);
+    }
+  }, [pdfDocument.numPages, numPages, onDocumentLoad]);
+
+  return (
+    <PdfHighlighter
+      pdfDocument={pdfDocument}
+      highlights={highlights}
+      onSelection={onSelection}
+      utilsRef={(utils) => {
+        highlighterUtilsRef.current = utils;
+      }}
+      pdfScaleValue={zoomLevel}
+      textSelectionColor="rgba(147, 51, 234, 0.4)"
+      style={{ height: '100%' }}
+    >
+      <HighlightContainer
+        savedRabbitHoles={savedRabbitHoles}
+        onReopenRabbitHole={onReopenRabbitHole}
+      />
+    </PdfHighlighter>
+  );
+}
+
 export function PdfViewer({
   file,
   currentPage,
@@ -331,31 +380,19 @@ export function PdfViewer({
   return (
     <div className="h-full flex flex-col relative" onContextMenu={handleContextMenu}>
       <PdfLoader document={file} workerSrc={PDFJS_WORKER_SRC}>
-        {(pdfDocument) => {
-          // Update numPages when document loads
-          if (pdfDocument.numPages !== numPages) {
-            onDocumentLoad(pdfDocument.numPages);
-          }
-
-          return (
-            <PdfHighlighter
-              pdfDocument={pdfDocument}
-              highlights={highlights}
-              onSelection={handleSelection}
-              utilsRef={(utils) => {
-                highlighterUtilsRef.current = utils;
-              }}
-              pdfScaleValue={zoomLevel}
-              textSelectionColor="rgba(147, 51, 234, 0.4)"
-              style={{ height: '100%' }}
-            >
-              <HighlightContainer
-                savedRabbitHoles={savedRabbitHoles}
-                onReopenRabbitHole={onReopenRabbitHole}
-              />
-            </PdfHighlighter>
-          );
-        }}
+        {(pdfDocument) => (
+          <PdfHighlighterWrapper
+            pdfDocument={pdfDocument}
+            numPages={numPages}
+            onDocumentLoad={onDocumentLoad}
+            highlights={highlights}
+            onSelection={handleSelection}
+            highlighterUtilsRef={highlighterUtilsRef}
+            zoomLevel={zoomLevel}
+            savedRabbitHoles={savedRabbitHoles}
+            onReopenRabbitHole={onReopenRabbitHole}
+          />
+        )}
       </PdfLoader>
 
       {/* Selection tooltip */}
