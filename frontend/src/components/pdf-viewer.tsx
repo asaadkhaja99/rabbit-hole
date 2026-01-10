@@ -913,21 +913,10 @@ export function PdfViewer({
 
       // Only render image if it's in the visible set
       if (equation.imageDataUrl && visibleEquationImages.has(equation.id)) {
-        // Get page dimensions to calculate minimum size (1/3 of page width)
-        const viewer = highlighterUtilsRef.current?.getViewer();
-        const pageEl = viewer?.container.querySelector(`[data-page-number="${equation.pageNumber}"]`) as HTMLElement;
-        const pageWidth = pageEl ? pageEl.offsetWidth : 800; // fallback to 800px
-        const minWidth = pageWidth / 3;
-
-        // Calculate display size - scale up to minimum width while maintaining aspect ratio
-        let displayWidth = equation.bounds.width;
-        let displayHeight = equation.bounds.height;
-
-        if (displayWidth < minWidth) {
-          const scaleFactor = minWidth / displayWidth;
-          displayWidth = minWidth;
-          displayHeight = displayHeight * scaleFactor;
-        }
+        // Scale image to 3x the selected area for better visibility
+        const scaleFactor = 3;
+        const displayWidth = equation.bounds.width * scaleFactor;
+        const displayHeight = equation.bounds.height * scaleFactor;
 
         // Center the scaled image on the original selection
         const offsetX = (displayWidth - equation.bounds.width) / 2;
