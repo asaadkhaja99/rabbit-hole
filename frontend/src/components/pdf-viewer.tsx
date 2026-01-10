@@ -11,6 +11,9 @@ import { FileQuestion, Rabbit } from 'lucide-react';
 import { SavedRabbitHole, RabbitHoleWindow } from '../App';
 import { HighlightMarkers } from './highlight-markers';
 import { ContextMenu } from './context-menu';
+import { FigureTooltip } from './figure-tooltip';
+import { extractFiguresFromPage, captureFigureRegion, parseFigureReference, type FigureInfo } from '../utils/figure-extractor';
+import { useFigureStore } from '../hooks/useFigureStore';
 import 'react-pdf-highlighter-extended/dist/esm/style/PdfHighlighter.css';
 import 'react-pdf-highlighter-extended/dist/esm/style/TextHighlight.css';
 import 'react-pdf-highlighter-extended/dist/esm/style/AreaHighlight.css';
@@ -182,6 +185,7 @@ function PdfHighlighterWrapper({
   zoomLevel,
   savedRabbitHoles,
   onReopenRabbitHole,
+  figureStore,
 }: {
   pdfDocument: PDFDocumentProxy;
   numPages: number | null;
@@ -192,6 +196,7 @@ function PdfHighlighterWrapper({
   zoomLevel: number;
   savedRabbitHoles: SavedRabbitHole[];
   onReopenRabbitHole: (rabbitHole: SavedRabbitHole) => void;
+  figureStore: ReturnType<typeof useFigureStore>;
 }) {
   // Update numPages when document loads - using useEffect to avoid setState during render
   useEffect(() => {
@@ -199,6 +204,41 @@ function PdfHighlighterWrapper({
       onDocumentLoad(pdfDocument.numPages);
     }
   }, [pdfDocument.numPages, numPages, onDocumentLoad]);
+
+  // Extract figures from all pages when document loads
+  // Use a ref to track if extraction has been done for this document
+  const extractedDocRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Skip if already extracted for this document
+    const docId = pdfDocument.fingerprints?.[0] || String(pdfDocument.numPages);
+    if (extractedDocRef.current === docId) return;
+
+    async function extractAllFigures() {
+      extractedDocRef.current = docId;
+      figureStore.clear();
+
+      for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
+        try {
+          const page = await pdfDocument.getPage(pageNum);
+          const figures = await extractFiguresFromPage(page, pageNum);
+
+          for (const figure of figures) {
+            figureStore.addFigure(figure.figureNumber, figure);
+            console.log(`Found figure ${figure.figureNumber} on page ${figure.pageNumber}: "${figure.captionText.substring(0, 50)}..."`);
+          }
+        } catch (error) {
+          console.error(`Failed to extract figures from page ${pageNum}:`, error);
+        }
+      }
+
+      // Mark extraction complete, but screenshots will be captured lazily
+      figureStore.setReady(true);
+      console.log(`Extracted ${figureStore.figures.size} figures from PDF`);
+    }
+
+    extractAllFigures();
+  }, [pdfDocument]);
 
   return (
     <PdfHighlighter
@@ -245,6 +285,13 @@ export function PdfViewer({
     text: string;
     page: number;
     position: ScaledPosition;
+  } | null>(null);
+
+  // Figure click-to-preview state
+  const figureStore = useFigureStore();
+  const [hoveredFigure, setHoveredFigure] = useState<{
+    figure: FigureInfo;
+    position: { x: number; y: number };
   } | null>(null);
 
   // Clear selection tooltip when text is deselected
@@ -345,6 +392,141 @@ export function PdfViewer({
     }
   }, [zoomLevel]);
 
+  // Capture figure screenshot lazily when needed
+  const captureFigureScreenshot = useCallback(async (figure: FigureInfo): Promise<string | null> => {
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) return null;
+
+    try {
+      const pageView = viewer.getPageView(figure.pageNumber - 1); // 0-indexed
+      if (!pageView?.canvas || !pageView?.viewport) return null;
+
+      const canvas = pageView.canvas;
+      const viewport = pageView.viewport;
+      const pageHeight = viewport.height / viewport.scale;
+
+      const dataUrl = captureFigureRegion(
+        canvas,
+        figure.captionY,
+        pageHeight,
+        700, // Capture 700 units above caption for larger figures
+        viewport.scale
+      );
+
+      return dataUrl || null;
+    } catch (error) {
+      console.error('Failed to capture figure screenshot:', error);
+      return null;
+    }
+  }, []);
+
+  // Highlight figure references in text layer and handle clicks
+  useEffect(() => {
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer || !figureStore.isReady) return;
+
+    const container = viewer.container;
+
+    // Pattern to match figure references
+    const figurePattern = /\b(Figure|Fig\.?)\s*(\d+[a-z]?)\b/gi;
+
+    // Process text layers to highlight figure references
+    const processTextLayers = () => {
+      const textLayers = container.querySelectorAll('.textLayer');
+
+      textLayers.forEach((textLayer) => {
+        // Skip if already processed
+        if (textLayer.getAttribute('data-figures-processed')) return;
+        textLayer.setAttribute('data-figures-processed', 'true');
+
+        const spans = textLayer.querySelectorAll('span');
+        spans.forEach((span) => {
+          const text = span.textContent || '';
+          if (!figurePattern.test(text)) return;
+
+          // Reset pattern index
+          figurePattern.lastIndex = 0;
+
+          // Replace figure references with clickable spans
+          const newHTML = text.replace(figurePattern, (match, prefix, num) => {
+            const figureNumber = num;
+            if (figureStore.hasFigure(figureNumber)) {
+              return `<span class="figure-link" data-figure="${figureNumber}" style="background-color: #fef3c7; border-radius: 2px; padding: 0 2px; cursor: pointer;">${match}</span>`;
+            }
+            return match;
+          });
+
+          if (newHTML !== text) {
+            span.innerHTML = newHTML;
+          }
+        });
+      });
+    };
+
+    // Process initially and on scroll (new pages render)
+    processTextLayers();
+
+    // Use MutationObserver to detect new text layers
+    const observer = new MutationObserver(() => {
+      processTextLayers();
+    });
+
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Handle clicks on figure links
+    const handleClick = async (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      if (target.classList.contains('figure-link')) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const figureNumber = target.getAttribute('data-figure');
+        if (!figureNumber) return;
+
+        const figure = figureStore.getFigure(figureNumber);
+        if (!figure) return;
+
+        // Capture screenshot if not already captured
+        if (!figure.imageDataUrl) {
+          const dataUrl = await captureFigureScreenshot(figure);
+          if (dataUrl) {
+            figure.imageDataUrl = dataUrl;
+            figureStore.addFigure(figureNumber, figure);
+          }
+        }
+
+        if (figure.imageDataUrl) {
+          const rect = target.getBoundingClientRect();
+          setHoveredFigure({
+            figure,
+            position: { x: rect.left + rect.width / 2, y: rect.top },
+          });
+        }
+      }
+    };
+
+    // Close tooltip when clicking elsewhere
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.figure-tooltip') && !target.classList.contains('figure-link')) {
+        setHoveredFigure(null);
+      }
+    };
+
+    container.addEventListener('click', handleClick);
+    document.addEventListener('click', handleClickOutside);
+
+    return () => {
+      observer.disconnect();
+      container.removeEventListener('click', handleClick);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [figureStore, captureFigureScreenshot]);
+
   const handleSelection = useCallback((selection: PdfSelection) => {
     if (selection.content.text && selection.content.text.trim().length > 0) {
       setCurrentSelection(selection);
@@ -391,6 +573,7 @@ export function PdfViewer({
             zoomLevel={zoomLevel}
             savedRabbitHoles={savedRabbitHoles}
             onReopenRabbitHole={onReopenRabbitHole}
+            figureStore={figureStore}
           />
         )}
       </PdfLoader>
@@ -426,6 +609,19 @@ export function PdfViewer({
           <HighlightMarkers
             savedRabbitHoles={pageRabbitHoles}
             onRabbitHoleClick={onReopenRabbitHole}
+          />
+        </div>
+      )}
+
+      {/* Figure click tooltip */}
+      {hoveredFigure && hoveredFigure.figure.imageDataUrl && (
+        <div className="figure-tooltip" style={{ zIndex: 99999 }}>
+          <FigureTooltip
+            imageDataUrl={hoveredFigure.figure.imageDataUrl}
+            caption={hoveredFigure.figure.captionText}
+            figureNumber={hoveredFigure.figure.figureNumber}
+            position={hoveredFigure.position}
+            onClose={() => setHoveredFigure(null)}
           />
         </div>
       )}
