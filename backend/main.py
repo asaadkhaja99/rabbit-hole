@@ -46,6 +46,22 @@ LEARNING_PLAN_PROMPT_TEMPLATE = prompts["learning_plan"]["prompt_template"]
 # No need for in-memory jobs dictionary
 
 
+async def iterate_in_thread(sync_iterable):
+    """Convert a sync iterator to async by running each next() in thread pool."""
+    def get_next(iterator):
+        try:
+            return next(iterator)
+        except StopIteration:
+            return None
+
+    iterator = iter(sync_iterable)
+    while True:
+        chunk = await asyncio.to_thread(get_next, iterator)
+        if chunk is None:
+            break
+        yield chunk
+
+
 # Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -237,14 +253,14 @@ Question: {question}"""
             if tools:
                 config.tools = tools
 
-            # Stream the response
+            # Stream the response (use async iterator to avoid blocking event loop)
             response = client.models.generate_content_stream(
                 model="gemini-3-flash-preview",
                 contents=user_prompt,
                 config=config
             )
 
-            for chunk in response:
+            async for chunk in iterate_in_thread(response):
                 if chunk.text:
                     data = json.dumps({"text": chunk.text})
                     yield f"data: {data}\n\n"
