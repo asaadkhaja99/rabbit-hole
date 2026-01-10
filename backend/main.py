@@ -24,6 +24,8 @@ from models import (
     LearningPlanRequest,
     LearningPlanResponse,
     ChatRequest,
+    ReferenceSummarizeRequest,
+    ReferenceSummaryResponse,
 )
 from storage import pdf_storage, jobs_storage
 
@@ -400,6 +402,75 @@ async def figure_explain(request: FigureRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.post("/api/reference/summarize", response_model=ReferenceSummaryResponse)
+async def summarize_reference(request: ReferenceSummarizeRequest):
+    """
+    Use Gemini Flash to extract and summarize a reference from raw bibliography text.
+    Returns structured information: title, authors, year, and a brief summary.
+    """
+    if not request.reference_text:
+        raise HTTPException(status_code=400, detail="reference_text is required")
+
+    try:
+        prompt = f"""Given this bibliography reference text, extract and provide:
+1. The paper title
+2. The authors (as a single string, e.g., "Smith et al." or "Smith, Jones, and Brown")
+3. The publication year (if present)
+4. A brief 1-2 sentence summary of what this paper is likely about based on the title and any context
+
+Reference text:
+{request.reference_text}
+
+Citation key: {request.citation_key}
+
+Respond in JSON format with these exact fields:
+{{"title": "...", "authors": "...", "year": 2020, "summary": "..."}}
+
+If you cannot determine a field, use reasonable defaults:
+- title: Use the citation key formatted nicely
+- authors: "Unknown"
+- year: null
+- summary: A brief guess based on any available information"""
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+            )
+        )
+
+        # Parse the JSON response - try to extract JSON from the response
+        response_text = response.text.strip()
+
+        # Try to find JSON in the response (it might be wrapped in markdown code blocks)
+        import re
+        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(response_text)
+
+        return ReferenceSummaryResponse(
+            title=result.get("title", f"Reference: {request.citation_key}"),
+            authors=result.get("authors", "Unknown"),
+            year=result.get("year"),
+            summary=result.get("summary", "No summary available")
+        )
+
+    except json.JSONDecodeError as e:
+        # If JSON parsing fails, return a fallback
+        return ReferenceSummaryResponse(
+            title=f"Reference: {request.citation_key}",
+            authors="Unknown",
+            year=None,
+            summary=request.reference_text[:150] + "..." if len(request.reference_text) > 150 else request.reference_text
+        )
+    except Exception as e:
+        print(f"Error in summarize_reference: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to summarize reference: {str(e)}")
 
 
 @app.post("/api/learning-plan/generate", response_model=LearningPlanResponse)

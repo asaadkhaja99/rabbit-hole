@@ -3,6 +3,48 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ReferenceSummary {
+  title: string;
+  authors: string;
+  year?: number;
+  summary: string;
+}
+
+/**
+ * Get a brief summary of a reference using Gemini Flash
+ */
+export async function summarizeReference(
+  referenceText: string,
+  citationKey: string
+): Promise<ReferenceSummary> {
+  try {
+    const response = await fetch('/api/reference/summarize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        reference_text: referenceText,
+        citation_key: citationKey,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to summarize reference:', error);
+    // Return a fallback
+    return {
+      title: `Reference: ${citationKey}`,
+      authors: 'Unknown',
+      summary: referenceText.slice(0, 150) + '...',
+    };
+  }
+}
+
 export interface ChatStreamCallbacks {
   onChunk: (text: string) => void;
   onComplete: () => void;

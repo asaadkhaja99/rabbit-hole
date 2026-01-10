@@ -57,3 +57,15 @@ class ChatRequest(BaseModel):
     page: Optional[int] = None
     file_search_store_id: Optional[str] = None
     history: Optional[list[ChatMessage]] = None
+
+
+class ReferenceSummarizeRequest(BaseModel):
+    reference_text: str
+    citation_key: str
+
+
+class ReferenceSummaryResponse(BaseModel):
+    title: str
+    authors: str
+    year: Optional[int] = None
+    summary: str

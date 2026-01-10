@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Toolbar } from './components/toolbar';
-import { PdfViewer } from './components/pdf-viewer';
+import { PdfViewer, type ReferenceRabbitHoleInfo } from './components/pdf-viewer';
 import { RabbitHolePopup } from './components/rabbit-hole-popup';
 import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
@@ -413,6 +413,141 @@ export default function App() {
     );
   };
 
+  const handleStartReferenceRabbitHole = (info: ReferenceRabbitHoleInfo) => {
+    const id = Date.now().toString();
+    const topic = `Ref ${info.citationKey}: ${info.referenceTitle.substring(0, 40)}${info.referenceTitle.length > 40 ? '...' : ''}`;
+
+    // Build the pre-built prompt for reference analysis
+    const prompt = `I'm reading a paper and encountered reference ${info.citationKey}.
+
+**Current Context (paragraph containing the citation):**
+"${info.paragraphContext}"
+
+**Referenced Paper:**
+- Title: ${info.referenceTitle}
+- Authors: ${info.referenceAuthors}
+${info.referenceYear ? `- Year: ${info.referenceYear}` : ''}
+
+**Please explain:**
+1. What specific part/concept from the referenced paper is being cited here?
+2. Why is this reference relevant to the current context?
+3. What are the key insights from the referenced work that apply here?
+4. How does this reference support or relate to the main argument?
+
+Use the full paper context from my uploaded PDF to provide accurate analysis.`;
+
+    // Create user message with the prompt
+    const userMessage: Message = {
+      id: id + '_user',
+      role: 'user',
+      content: prompt,
+      timestamp: new Date(),
+      pageReference: info.pageNumber,
+    };
+
+    // Create placeholder AI message for streaming
+    const aiMessageId = id + '_ai';
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      pageReference: info.pageNumber,
+    };
+
+    // Create and SAVE the rabbit hole immediately
+    const newSavedRabbitHole: SavedRabbitHole = {
+      id,
+      selectedText: info.paragraphContext.substring(0, 100),
+      pageReference: info.pageNumber,
+      summary: `Analyzing reference ${info.citationKey}...`,
+      messages: [userMessage, aiMessage],
+      rabbitHolePath: [topic],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setSavedRabbitHoles(prev => [...prev, newSavedRabbitHole]);
+
+    // Stack windows vertically on the right side
+    const existingCount = rabbitHoleWindows.length;
+    const yOffset = existingCount * 20;
+
+    // Create the UI window
+    const newWindow: RabbitHoleWindow = {
+      id,
+      selectedText: info.paragraphContext.substring(0, 100),
+      topic,
+      pageReference: info.pageNumber,
+      position: { x: window.innerWidth - 420, y: 80 + yOffset },
+      size: { width: 400, height: 500 },
+      messages: [userMessage, aiMessage],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setRabbitHoleWindows(prev => [...prev, newWindow]);
+
+    // Stream response from Gemini
+    streamChat(
+      prompt,
+      info.paragraphContext,
+      info.pageNumber,
+      currentProject?.fileSearchStoreId,
+      [], // No history for new reference conversation
+      {
+        onChunk: (text) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+
+          setSavedRabbitHoles(prev =>
+            prev.map(c =>
+              c.id === id
+                ? {
+                    ...c,
+                    messages: c.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onComplete: () => {
+          console.log('Reference analysis complete');
+        },
+        onError: (error) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: `Error: ${error}. Please try again.` }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+        },
+      }
+    );
+  };
+
   const handleCloseRabbitHole = (windowId: string) => {
     const window = rabbitHoleWindows.find(w => w.id === windowId);
     if (!window) return;
@@ -754,6 +889,7 @@ export default function App() {
             onDocumentLoad={setNumPages}
             onStartRabbitHole={handleStartRabbitHole}
             onStartFigureRabbitHole={handleStartFigureRabbitHole}
+            onStartReferenceRabbitHole={handleStartReferenceRabbitHole}
             savedRabbitHoles={savedRabbitHoles}
             onDeleteRabbitHole={handleDeleteRabbitHole}
             onReopenRabbitHole={handleReopenRabbitHole}
