@@ -130,3 +130,68 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Markdown content styling for chat messages */
+.markdown-content p {
+  margin: 0.25rem 0;
+}
+
+.markdown-content p:first-child {
+  margin-top: 0;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content code {
+  background-color: #f1f5f9;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+  padding-left: 1rem;
+  margin: 0.25rem 0;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+  padding-left: 1rem;
+  margin: 0.25rem 0;
+}
+
+.markdown-content li {
+  margin: 0.125rem 0;
+}
+
+.markdown-content a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.markdown-content blockquote {
+  border-left: 2px solid #cbd5e1;
+  padding-left: 0.5rem;
+  margin: 0.25rem 0;
+  font-style: italic;
+}

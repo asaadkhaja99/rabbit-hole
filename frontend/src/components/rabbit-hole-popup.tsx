@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Minus, Maximize2, Send, Hash, Rabbit, ChevronRight } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { RabbitHoleWindow, Message } from '../App';
 import { ContextMenu } from './context-menu';
 
@@ -165,7 +169,18 @@ export function RabbitHolePopup({
                       : 'bg-white text-slate-800 border border-slate-200'
                   }`}
                 >
-                  <div className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                  {message.role === 'assistant' ? (
+                    <div className="text-sm leading-relaxed markdown-content">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                  )}
                   {message.pageReference && (
                     <div className="flex items-center gap-1 mt-1.5 text-xs opacity-60">
                       <Hash className="w-3 h-3" strokeWidth={1.5} />
