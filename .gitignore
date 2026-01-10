@@ -209,3 +209,17 @@ __marimo__/
 .examples/
 
 .claude
+
+# Frontend (Node.js)
+node_modules/
+*.local
+.DS_Store
+
+# Frontend build output
+frontend/build/
+frontend/dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
