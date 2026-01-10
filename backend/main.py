@@ -26,14 +26,15 @@ from models import (
 )
 from storage import pdf_storage, jobs_storage
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from root
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Initialize Gemini client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Load prompts from YAML
-with open("prompts.yaml", "r") as f:
+# Load prompts from YAML (in same directory as main.py)
+prompts_path = Path(__file__).parent / "prompts.yaml"
+with open(prompts_path, "r") as f:
     prompts = yaml.safe_load(f)
 
 CHAT_SYSTEM_PROMPT = prompts["chat"]["system_prompt"]
@@ -41,8 +42,8 @@ FORMULA_SYSTEM_PROMPT = prompts["formula"]["system_prompt"]
 FIGURE_SYSTEM_PROMPT = prompts["figure"]["system_prompt"]
 LEARNING_PLAN_PROMPT_TEMPLATE = prompts["learning_plan"]["prompt_template"]
 
-# In-memory job store for learning plans
-jobs = {}
+# Note: Jobs are now persisted in jobs_storage (from storage.py)
+# No need for in-memory jobs dictionary
 
 
 # Lifespan context manager
@@ -99,9 +100,7 @@ async def upload_pdf(
     try:
         # Create file search store for this PDF
         file_search_store = client.file_search_stores.create(
-            config=types.CreateFileSearchStoreConfig(
-                display_name=display_name or file.filename
-            )
+            config={'display_name': display_name or file.filename}
         )
 
         # Save uploaded file temporarily
@@ -114,12 +113,10 @@ async def upload_pdf(
             f.write(content)
 
         # Upload to file search store
-        operation = client.file_search_stores.upload(
-            path=str(temp_path),
+        operation = client.file_search_stores.upload_to_file_search_store(
+            file=str(temp_path),
             file_search_store_name=file_search_store.name,
-            config=types.UploadFileConfig(
-                display_name=display_name or file.filename
-            )
+            config={'display_name': display_name or file.filename}
         )
 
         # Poll for completion (with timeout)
@@ -128,7 +125,7 @@ async def upload_pdf(
         while not operation.done and elapsed < max_wait:
             time.sleep(2)
             elapsed += 2
-            operation = client.operations.get(name=operation.name)
+            operation = client.operations.get(operation)
 
         # Clean up temp file
         temp_path.unlink(missing_ok=True)
@@ -226,8 +223,8 @@ Question: {question}"""
             tools = []
             if file_search_store_id:
                 tools.append(types.Tool(
-                    file_search=types.FileSearchTool(
-                        file_search_stores=[file_search_store_id]
+                    file_search=types.FileSearch(
+                        file_search_store_names=[file_search_store_id]
                     )
                 ))
 
@@ -383,7 +380,7 @@ async def generate_learning_plan(request: LearningPlanRequest):
     Returns a job_id to poll for results.
     """
     job_id = f"lp_{uuid4().hex[:8]}"
-    jobs[job_id] = {"status": "queued", "request": request.model_dump()}
+    jobs_storage.set(job_id, {"status": "queued", "request": request.model_dump()})
 
     # Start background task
     asyncio.create_task(process_learning_plan(job_id, request))
@@ -401,10 +398,10 @@ async def get_learning_plan_status(job_id: str):
     Check status and retrieve completed learning plan.
     Returns processing status or completed plan.
     """
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job ID not found")
+    job = jobs_storage.get(job_id)
 
-    job = jobs[job_id]
+    if not job:
+        raise HTTPException(status_code=404, detail="Job ID not found")
 
     response = {
         "job_id": job_id,
@@ -430,8 +427,11 @@ async def process_learning_plan(job_id: str, request: LearningPlanRequest):
     Background task to process learning plan using Deep Research.
     """
     try:
-        jobs[job_id]["status"] = "processing"
-        jobs[job_id]["progress"] = "Researching prerequisites..."
+        # Update status to processing
+        job_data = jobs_storage.get(job_id)
+        job_data["status"] = "processing"
+        job_data["progress"] = "Researching prerequisites..."
+        jobs_storage.set(job_id, job_data)
 
         # Build the Deep Research prompt
         sections_text = ", ".join(request.sections) if request.sections else "Not provided"
@@ -443,7 +443,8 @@ async def process_learning_plan(job_id: str, request: LearningPlanRequest):
         )
 
         # Use Deep Research (grounding with Google Search)
-        jobs[job_id]["progress"] = "Running deep research..."
+        job_data["progress"] = "Running deep research..."
+        jobs_storage.set(job_id, job_data)
 
         response = client.models.generate_content(
             model="gemini-3-flash-preview",
@@ -458,12 +459,15 @@ async def process_learning_plan(job_id: str, request: LearningPlanRequest):
         # Parse the JSON response
         plan_data = json.loads(response.text)
 
-        jobs[job_id]["status"] = "complete"
-        jobs[job_id]["plan"] = plan_data
+        job_data["status"] = "complete"
+        job_data["plan"] = plan_data
+        jobs_storage.set(job_id, job_data)
 
     except Exception as e:
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = str(e)
+        job_data = jobs_storage.get(job_id) or {}
+        job_data["status"] = "failed"
+        job_data["error"] = str(e)
+        jobs_storage.set(job_id, job_data)
 
 
 # ============================================================================

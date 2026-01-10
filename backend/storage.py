@@ -55,6 +55,7 @@ class JSONStorage:
         self.write({})
 
 
-# Initialize storage instances
-pdf_storage = JSONStorage("data/pdfs.json")
-jobs_storage = JSONStorage("data/jobs.json")
+# Initialize storage instances (relative to storage.py location in backend/)
+_storage_dir = Path(__file__).parent / "data"
+pdf_storage = JSONStorage(str(_storage_dir / "pdfs.json"))
+jobs_storage = JSONStorage(str(_storage_dir / "jobs.json"))
