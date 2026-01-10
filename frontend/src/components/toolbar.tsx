@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ArrowLeft, FileText, Layers, Rabbit, GitBranch, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, FileText, Layers, Rabbit, GitBranch, ZoomIn, ZoomOut, Calculator } from 'lucide-react';
 
 interface ToolbarProps {
   pdfFile: string | null;
@@ -14,6 +14,8 @@ interface ToolbarProps {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   zoomLevel?: number;
+  onToggleEquationMode?: () => void;
+  isEquationMode?: boolean;
 }
 
 export function Toolbar({
@@ -29,6 +31,8 @@ export function Toolbar({
   onZoomIn,
   onZoomOut,
   zoomLevel = 1,
+  onToggleEquationMode,
+  isEquationMode = false,
 }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -155,6 +159,20 @@ export function Toolbar({
                 <Rabbit className="w-3.5 h-3.5" strokeWidth={1.5} />
                 <span>{savedRabbitHolesCount}</span>
               </div>
+            )}
+            {onToggleEquationMode && (
+              <button
+                onClick={onToggleEquationMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors text-sm ${
+                  isEquationMode
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'
+                }`}
+                title={isEquationMode ? 'Exit equation mode' : 'Annotate equations'}
+              >
+                <Calculator className="w-4 h-4" strokeWidth={1.5} />
+                Equation
+              </button>
             )}
             <button
               onClick={onToggleRabbitHoleGraph}

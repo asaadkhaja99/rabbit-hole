@@ -12,8 +12,12 @@ import { SavedRabbitHole, RabbitHoleWindow } from '../App';
 import { HighlightMarkers } from './highlight-markers';
 import { ContextMenu } from './context-menu';
 import { FigureTooltip } from './figure-tooltip';
+import { EquationTooltip } from './equation-tooltip';
+import { EquationAnnotationOverlay, type EquationAnnotation } from './equation-annotation';
 import { extractFiguresFromPage, captureFigureRegion, parseFigureReference, type FigureInfo } from '../utils/figure-extractor';
+import { extractEquationsFromPage, captureEquationRegion, parseEquationReference, type EquationInfo } from '../utils/equation-extractor';
 import { useFigureStore } from '../hooks/useFigureStore';
+import { useEquationStore } from '../hooks/useEquationStore';
 import 'react-pdf-highlighter-extended/dist/esm/style/PdfHighlighter.css';
 import 'react-pdf-highlighter-extended/dist/esm/style/TextHighlight.css';
 import 'react-pdf-highlighter-extended/dist/esm/style/AreaHighlight.css';
@@ -30,6 +34,7 @@ interface PdfViewerProps {
   onDocumentLoad: (numPages: number) => void;
   onStartRabbitHole: (selectedText: string, pageReference: number, parentId?: string, highlightPosition?: ScaledPosition) => void;
   onStartFigureRabbitHole: (question: string, imageDataUrl: string, figureNumber: string, pageNumber: number) => void;
+  onStartEquationRabbitHole: (question: string, imageDataUrl: string, equationNumber: string, pageNumber: number, bounds: { left: number; top: number; width: number; height: number }) => void;
   savedRabbitHoles: SavedRabbitHole[];
   onDeleteRabbitHole: (rabbitHoleId: string) => void;
   onReopenRabbitHole: (rabbitHole: SavedRabbitHole) => void;
@@ -39,6 +44,12 @@ interface PdfViewerProps {
   onZoomOut: () => void;
   scrollToHighlightId?: string | null;
   onScrollComplete?: () => void;
+  isEquationMode?: boolean;
+  persistedEquations?: Array<{
+    id: string;
+    bounds: { left: number; top: number; width: number; height: number };
+    pageNumber: number;
+  }>;
 }
 
 // Custom highlight type that includes our metadata
@@ -187,6 +198,7 @@ function PdfHighlighterWrapper({
   savedRabbitHoles,
   onReopenRabbitHole,
   figureStore,
+  equationStore,
 }: {
   pdfDocument: PDFDocumentProxy;
   numPages: number | null;
@@ -198,6 +210,7 @@ function PdfHighlighterWrapper({
   savedRabbitHoles: SavedRabbitHole[];
   onReopenRabbitHole: (rabbitHole: SavedRabbitHole) => void;
   figureStore: ReturnType<typeof useFigureStore>;
+  equationStore: ReturnType<typeof useEquationStore>;
 }) {
   // Update numPages when document loads - using useEffect to avoid setState during render
   useEffect(() => {
@@ -215,31 +228,41 @@ function PdfHighlighterWrapper({
     const docId = pdfDocument.fingerprints?.[0] || String(pdfDocument.numPages);
     if (extractedDocRef.current === docId) return;
 
-    async function extractAllFigures() {
+    async function extractAllFiguresAndEquations() {
       extractedDocRef.current = docId;
       figureStore.clear();
+      equationStore.clear();
 
       for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
         try {
           const page = await pdfDocument.getPage(pageNum);
-          const figures = await extractFiguresFromPage(page, pageNum);
 
+          // Extract figures
+          const figures = await extractFiguresFromPage(page, pageNum);
           for (const figure of figures) {
             figureStore.addFigure(figure.figureNumber, figure);
             console.log(`Found figure ${figure.figureNumber} on page ${figure.pageNumber}: "${figure.captionText.substring(0, 50)}..."`);
           }
+
+          // Extract equations
+          const equations = await extractEquationsFromPage(page, pageNum);
+          for (const equation of equations) {
+            equationStore.addEquation(equation.equationNumber, equation);
+            console.log(`Found equation ${equation.equationNumber} on page ${equation.pageNumber}: "${equation.labelText}"`);
+          }
         } catch (error) {
-          console.error(`Failed to extract figures from page ${pageNum}:`, error);
+          console.error(`Failed to extract from page ${pageNum}:`, error);
         }
       }
 
       // Mark extraction complete, but screenshots will be captured lazily
       figureStore.setReady(true);
-      console.log(`Extracted ${figureStore.figures.size} figures from PDF`);
+      equationStore.setReady(true);
+      console.log(`Extracted ${figureStore.figures.size} figures and ${equationStore.equations.size} equations from PDF`);
     }
 
-    extractAllFigures();
-  }, [pdfDocument]);
+    extractAllFiguresAndEquations();
+  }, [pdfDocument, figureStore, equationStore]);
 
   return (
     <PdfHighlighter
@@ -269,6 +292,7 @@ export function PdfViewer({
   onDocumentLoad,
   onStartRabbitHole,
   onStartFigureRabbitHole,
+  onStartEquationRabbitHole,
   savedRabbitHoles,
   onDeleteRabbitHole,
   onReopenRabbitHole,
@@ -278,6 +302,8 @@ export function PdfViewer({
   onZoomOut,
   scrollToHighlightId,
   onScrollComplete,
+  isEquationMode = false,
+  persistedEquations = [],
 }: PdfViewerProps) {
   const highlighterUtilsRef = useRef<PdfHighlighterUtils>();
   const [currentSelection, setCurrentSelection] = useState<PdfSelection | null>(null);
@@ -295,6 +321,20 @@ export function PdfViewer({
     figure: FigureInfo;
     position: { x: number; y: number };
   } | null>(null);
+
+  // Equation click-to-preview state
+  const equationStore = useEquationStore();
+  const [hoveredEquation, setHoveredEquation] = useState<{
+    equation: EquationInfo;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  // Equation annotation state (for drawing rectangles)
+  const [equationAnnotations, setEquationAnnotations] = useState<EquationAnnotation[]>([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageNum: number } | null>(null);
+  const [currentDraw, setCurrentDraw] = useState<{ x: number; y: number } | null>(null);
+  const viewerContainerRef = useRef<HTMLDivElement>(null);
 
   // Clear selection tooltip when text is deselected
   useEffect(() => {
@@ -422,6 +462,34 @@ export function PdfViewer({
     }
   }, []);
 
+  // Capture equation screenshot lazily when needed
+  const captureEquationScreenshot = useCallback(async (equation: EquationInfo): Promise<string | null> => {
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) return null;
+
+    try {
+      const pageView = viewer.getPageView(equation.pageNumber - 1); // 0-indexed
+      if (!pageView?.canvas || !pageView?.viewport) return null;
+
+      const canvas = pageView.canvas;
+      const viewport = pageView.viewport;
+      const pageHeight = viewport.height / viewport.scale;
+
+      const dataUrl = captureEquationRegion(
+        canvas,
+        equation.equationY,
+        pageHeight,
+        200, // Capture 200px region around equation
+        viewport.scale
+      );
+
+      return dataUrl || null;
+    } catch (error) {
+      console.error('Failed to capture equation screenshot:', error);
+      return null;
+    }
+  }, []);
+
   // Highlight figure references in text layer and handle clicks
   useEffect(() => {
     const viewer = highlighterUtilsRef.current?.getViewer();
@@ -529,6 +597,264 @@ export function PdfViewer({
     };
   }, [figureStore, captureFigureScreenshot]);
 
+  // Highlight equation references in text layer and handle clicks
+  useEffect(() => {
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer || !equationStore.isReady) return;
+
+    const container = viewer.container;
+
+    // Pattern to match equation references: "Equation 1", "Eq. 2a", "(1)"
+    const equationPattern = /\b(Equation|Eq\.?)\s*(\d+[a-z]?)\b|\((\d+[a-z]?)\)/gi;
+
+    // Process text layers to highlight equation references
+    const processTextLayers = () => {
+      const textLayers = container.querySelectorAll('.textLayer');
+
+      textLayers.forEach((textLayer) => {
+        // Skip if already processed
+        if (textLayer.getAttribute('data-equations-processed')) return;
+        textLayer.setAttribute('data-equations-processed', 'true');
+
+        const spans = textLayer.querySelectorAll('span');
+        spans.forEach((span) => {
+          const text = span.textContent || '';
+          if (!equationPattern.test(text)) return;
+
+          // Reset pattern index
+          equationPattern.lastIndex = 0;
+
+          // Replace equation references with clickable spans
+          const newHTML = text.replace(equationPattern, (match, prefix, num1, num2) => {
+            const equationNumber = num1 || num2; // num1 for "Equation X", num2 for "(X)"
+            if (equationStore.hasEquation(equationNumber)) {
+              return `<span class="equation-link" data-equation="${equationNumber}" style="background-color: #dbeafe; border-radius: 2px; padding: 0 2px; cursor: pointer;">${match}</span>`;
+            }
+            return match;
+          });
+
+          if (newHTML !== text) {
+            span.innerHTML = newHTML;
+          }
+        });
+      });
+    };
+
+    // Process initially and on scroll (new pages render)
+    processTextLayers();
+
+    // Use MutationObserver to detect new text layers
+    const observer = new MutationObserver(() => {
+      processTextLayers();
+    });
+
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Handle clicks on equation links
+    const handleClick = async (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      if (target.classList.contains('equation-link')) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const equationNumber = target.getAttribute('data-equation');
+        if (!equationNumber) return;
+
+        const equation = equationStore.getEquation(equationNumber);
+        if (!equation) return;
+
+        // Capture screenshot if not already captured
+        if (!equation.imageDataUrl) {
+          const dataUrl = await captureEquationScreenshot(equation);
+          if (dataUrl) {
+            equation.imageDataUrl = dataUrl;
+            equationStore.addEquation(equationNumber, equation);
+          }
+        }
+
+        if (equation.imageDataUrl) {
+          const rect = target.getBoundingClientRect();
+          setHoveredEquation({
+            equation,
+            position: { x: rect.left + rect.width / 2, y: rect.top },
+          });
+        }
+      }
+    };
+
+    // Close tooltip when clicking elsewhere
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.equation-tooltip') && !target.classList.contains('equation-link')) {
+        setHoveredEquation(null);
+      }
+    };
+
+    container.addEventListener('click', handleClick);
+    document.addEventListener('click', handleClickOutside);
+
+    return () => {
+      observer.disconnect();
+      container.removeEventListener('click', handleClick);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [equationStore, captureEquationScreenshot]);
+
+  // Equation annotation drawing handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isEquationMode) return;
+
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) return;
+
+    const container = viewer.container;
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left + container.scrollLeft;
+    const y = e.clientY - rect.top + container.scrollTop;
+
+    // Determine which page was clicked
+    const pages = container.querySelectorAll('.page');
+    let clickedPageNum = currentPage;
+
+    for (let i = 0; i < pages.length; i++) {
+      const pageEl = pages[i] as HTMLElement;
+      const pageRect = pageEl.getBoundingClientRect();
+      const pageY = pageRect.top - rect.top + container.scrollTop;
+
+      if (y >= pageY && y <= pageY + pageRect.height) {
+        clickedPageNum = i + 1;
+        break;
+      }
+    }
+
+    setDrawStart({ x, y, pageNum: clickedPageNum });
+    setIsDrawing(true);
+    setCurrentDraw({ x, y });
+  }, [isEquationMode, currentPage]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDrawing || !drawStart) return;
+
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) return;
+
+    const container = viewer.container;
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left + container.scrollLeft;
+    const y = e.clientY - rect.top + container.scrollTop;
+
+    setCurrentDraw({ x, y });
+  }, [isDrawing, drawStart]);
+
+  const handleMouseUp = useCallback(async () => {
+    if (!isDrawing || !drawStart || !currentDraw) {
+      setIsDrawing(false);
+      setDrawStart(null);
+      setCurrentDraw(null);
+      return;
+    }
+
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) {
+      setIsDrawing(false);
+      setDrawStart(null);
+      setCurrentDraw(null);
+      return;
+    }
+
+    // Calculate bounds
+    const left = Math.min(drawStart.x, currentDraw.x);
+    const top = Math.min(drawStart.y, currentDraw.y);
+    const width = Math.abs(currentDraw.x - drawStart.x);
+    const height = Math.abs(currentDraw.y - drawStart.y);
+
+    // Minimum size check
+    if (width < 20 || height < 20) {
+      setIsDrawing(false);
+      setDrawStart(null);
+      setCurrentDraw(null);
+      return;
+    }
+
+    // Capture the region from the canvas
+    const pageView = viewer.getPageView(drawStart.pageNum - 1);
+    if (!pageView?.canvas) {
+      setIsDrawing(false);
+      setDrawStart(null);
+      setCurrentDraw(null);
+      return;
+    }
+
+    const canvas = pageView.canvas;
+    const pageRect = pageView.div.getBoundingClientRect();
+    const containerRect = viewer.container.getBoundingClientRect();
+
+    // Convert coordinates to be relative to the page
+    const pageLeft = pageRect.left - containerRect.left + viewer.container.scrollLeft;
+    const pageTop = pageRect.top - containerRect.top + viewer.container.scrollTop;
+
+    const relativeLeft = left - pageLeft;
+    const relativeTop = top - pageTop;
+
+    // Capture the region
+    const tempCanvas = document.createElement('canvas');
+    const scale = canvas.width / pageRect.width;
+    tempCanvas.width = width * scale;
+    tempCanvas.height = height * scale;
+
+    const ctx = tempCanvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(
+        canvas,
+        relativeLeft * scale,
+        relativeTop * scale,
+        width * scale,
+        height * scale,
+        0,
+        0,
+        width * scale,
+        height * scale
+      );
+    }
+
+    const imageDataUrl = tempCanvas.toDataURL('image/png');
+
+    // Create annotation
+    const annotation: EquationAnnotation = {
+      id: Date.now().toString(),
+      bounds: {
+        left: relativeLeft,
+        top: relativeTop,
+        width,
+        height,
+      },
+      pageNumber: drawStart.pageNum,
+      question: '',
+      imageDataUrl,
+    };
+
+    setEquationAnnotations(prev => [...prev, annotation]);
+    setIsDrawing(false);
+    setDrawStart(null);
+    setCurrentDraw(null);
+  }, [isDrawing, drawStart, currentDraw]);
+
+  const handleRemoveAnnotation = useCallback((id: string) => {
+    setEquationAnnotations(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const handleSubmitAnnotation = useCallback((id: string, question: string, imageDataUrl: string) => {
+    const annotation = equationAnnotations.find(a => a.id === id);
+    if (!annotation) return;
+
+    // Call with bounds information
+    onStartEquationRabbitHole(question, imageDataUrl, id, annotation.pageNumber, annotation.bounds);
+  }, [equationAnnotations, onStartEquationRabbitHole]);
+
   const handleSelection = useCallback((selection: PdfSelection) => {
     if (selection.content.text && selection.content.text.trim().length > 0) {
       setCurrentSelection(selection);
@@ -562,7 +888,15 @@ export function PdfViewer({
   const pageRabbitHoles = savedRabbitHoles.filter(rh => rh.pageReference === currentPage);
 
   return (
-    <div className="h-full flex flex-col relative" onContextMenu={handleContextMenu}>
+    <div
+      className="h-full flex flex-col relative"
+      onContextMenu={handleContextMenu}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      style={{ cursor: isEquationMode ? 'crosshair' : 'default' }}
+      ref={viewerContainerRef}
+    >
       <PdfLoader document={file} workerSrc={PDFJS_WORKER_SRC}>
         {(pdfDocument) => (
           <PdfHighlighterWrapper
@@ -576,9 +910,54 @@ export function PdfViewer({
             savedRabbitHoles={savedRabbitHoles}
             onReopenRabbitHole={onReopenRabbitHole}
             figureStore={figureStore}
+            equationStore={equationStore}
           />
         )}
       </PdfLoader>
+
+      {/* Drawing rectangle preview */}
+      {isDrawing && drawStart && currentDraw && (
+        <div
+          className="absolute border-blue-600 bg-blue-400/50 pointer-events-none"
+          style={{
+            left: Math.min(drawStart.x, currentDraw.x),
+            top: Math.min(drawStart.y, currentDraw.y),
+            width: Math.abs(currentDraw.x - drawStart.x),
+            height: Math.abs(currentDraw.y - drawStart.y),
+            zIndex: 9999,
+            borderWidth: '3px',
+          }}
+        />
+      )}
+
+      {/* Equation annotations */}
+      {equationAnnotations.map(annotation => (
+        <EquationAnnotationOverlay
+          key={annotation.id}
+          annotation={annotation}
+          onRemove={handleRemoveAnnotation}
+          onSubmit={handleSubmitAnnotation}
+          scale={1}
+        />
+      ))}
+
+      {/* Persisted equation rectangles */}
+      {persistedEquations
+        .filter(eq => eq.pageNumber === currentPage)
+        .map(equation => (
+          <div
+            key={equation.id}
+            className="absolute border-green-600 bg-green-400/40 pointer-events-none"
+            style={{
+              left: equation.bounds.left,
+              top: equation.bounds.top,
+              width: equation.bounds.width,
+              height: equation.bounds.height,
+              borderWidth: '2px',
+              zIndex: 100,
+            }}
+          />
+        ))}
 
       {/* Selection tooltip */}
       {currentSelection && !contextMenu && (
@@ -626,6 +1005,21 @@ export function PdfViewer({
             position={hoveredFigure.position}
             onClose={() => setHoveredFigure(null)}
             onAskAboutFigure={onStartFigureRabbitHole}
+          />
+        </div>
+      )}
+
+      {/* Equation click tooltip */}
+      {hoveredEquation && hoveredEquation.equation.imageDataUrl && (
+        <div className="equation-tooltip" style={{ zIndex: 99999 }}>
+          <EquationTooltip
+            imageDataUrl={hoveredEquation.equation.imageDataUrl}
+            label={hoveredEquation.equation.labelText}
+            equationNumber={hoveredEquation.equation.equationNumber}
+            pageNumber={hoveredEquation.equation.pageNumber}
+            position={hoveredEquation.position}
+            onClose={() => setHoveredEquation(null)}
+            onAskAboutEquation={onStartEquationRabbitHole}
           />
         </div>
       )}

@@ -17,7 +17,24 @@ const STORE_NAME = 'pdfs';
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
+    request.onerror = (event) => {
+      const error = (event.target as IDBOpenDBRequest).error;
+      // If version error, delete the database and retry
+      if (error?.name === 'VersionError') {
+        indexedDB.deleteDatabase(DB_NAME);
+        const retryRequest = indexedDB.open(DB_NAME, DB_VERSION);
+        retryRequest.onerror = () => reject(retryRequest.error);
+        retryRequest.onsuccess = () => resolve(retryRequest.result);
+        retryRequest.onupgradeneeded = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+      } else {
+        reject(error);
+      }
+    };
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -124,6 +141,12 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const [isResizeHovered, setIsResizeHovered] = useState(false);
   const [scrollToHighlightId, setScrollToHighlightId] = useState<string | null>(null);
+  const [isEquationMode, setIsEquationMode] = useState(false);
+  const [persistedEquations, setPersistedEquations] = useState<Array<{
+    id: string;
+    bounds: { left: number; top: number; width: number; height: number };
+    pageNumber: number;
+  }>>([]);
 
   // Load projects from localStorage on mount and restore current project
   useEffect(() => {
@@ -392,6 +415,138 @@ export default function App() {
         },
         onComplete: () => {
           console.log('Figure analysis complete');
+        },
+        onError: (error) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: `Error: ${error}. Please try again.` }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+        },
+      }
+    );
+  };
+
+  const handleStartEquationRabbitHole = (
+    question: string,
+    imageDataUrl: string,
+    equationNumber: string,
+    pageNumber: number,
+    bounds: { left: number; top: number; width: number; height: number }
+  ) => {
+    const id = Date.now().toString();
+    const topic = `Equation ${equationNumber}: ${question.substring(0, 30)}${question.length > 30 ? '...' : ''}`;
+
+    // Add to persisted equations so it shows on the PDF
+    setPersistedEquations(prev => [...prev, {
+      id,
+      bounds,
+      pageNumber,
+    }]);
+
+    // Create user message with the image and question
+    const userMessage: Message = {
+      id: id + '_user',
+      role: 'user',
+      content: question,
+      timestamp: new Date(),
+      pageReference: pageNumber,
+      imageDataUrl,
+    };
+
+    // Create placeholder AI message for streaming
+    const aiMessageId = id + '_ai';
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      pageReference: pageNumber,
+    };
+
+    // Create and SAVE the rabbit hole immediately
+    const newSavedRabbitHole: SavedRabbitHole = {
+      id,
+      selectedText: `Equation ${equationNumber}`,
+      pageReference: pageNumber,
+      summary: 'Analyzing equation...',
+      messages: [userMessage, aiMessage],
+      rabbitHolePath: [topic],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setSavedRabbitHoles(prev => [...prev, newSavedRabbitHole]);
+
+    // Stack windows vertically on the right side
+    const existingCount = rabbitHoleWindows.length;
+    const yOffset = existingCount * 20;
+
+    // Create the UI window
+    const newWindow: RabbitHoleWindow = {
+      id,
+      selectedText: `Equation ${equationNumber}`,
+      topic,
+      pageReference: pageNumber,
+      position: { x: window.innerWidth - 420, y: 80 + yOffset },
+      size: { width: 400, height: 500 },
+      messages: [userMessage, aiMessage],
+      timestamp: new Date(),
+      depth: 0,
+    };
+    setRabbitHoleWindows(prev => [...prev, newWindow]);
+
+    // Start streaming response - include image context in the question
+    const contextWithImage = `[User is asking about Equation ${equationNumber} from the PDF]\n\nQuestion: ${question}`;
+
+    streamChat(
+      contextWithImage,
+      `Equation ${equationNumber}`,
+      pageNumber,
+      currentProject?.fileSearchStoreId,
+      [], // No history for new equation conversation
+      {
+        onChunk: (text) => {
+          setRabbitHoleWindows(prev =>
+            prev.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    messages: w.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : w
+            )
+          );
+
+          setSavedRabbitHoles(prev =>
+            prev.map(c =>
+              c.id === id
+                ? {
+                    ...c,
+                    messages: c.messages.map(m =>
+                      m.id === aiMessageId
+                        ? { ...m, content: m.content + text }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onComplete: () => {
+          console.log('Equation analysis complete');
         },
         onError: (error) => {
           setRabbitHoleWindows(prev =>
@@ -741,6 +896,8 @@ export default function App() {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         zoomLevel={zoomLevel}
+        onToggleEquationMode={() => setIsEquationMode(!isEquationMode)}
+        isEquationMode={isEquationMode}
       />
       
       <div className="flex flex-1 overflow-hidden">
@@ -754,6 +911,7 @@ export default function App() {
             onDocumentLoad={setNumPages}
             onStartRabbitHole={handleStartRabbitHole}
             onStartFigureRabbitHole={handleStartFigureRabbitHole}
+            onStartEquationRabbitHole={handleStartEquationRabbitHole}
             savedRabbitHoles={savedRabbitHoles}
             onDeleteRabbitHole={handleDeleteRabbitHole}
             onReopenRabbitHole={handleReopenRabbitHole}
@@ -763,6 +921,8 @@ export default function App() {
             onZoomOut={handleZoomOut}
             scrollToHighlightId={scrollToHighlightId}
             onScrollComplete={() => setScrollToHighlightId(null)}
+            isEquationMode={isEquationMode}
+            persistedEquations={persistedEquations}
           />
         </div>
       </div>

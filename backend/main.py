@@ -21,6 +21,7 @@ from models import (
     PDFInfo,
     PDFListResponse,
     FigureRequest,
+    EquationRequest,
     LearningPlanRequest,
     LearningPlanResponse,
     ChatRequest,
@@ -377,6 +378,63 @@ async def figure_explain(request: FigureRequest):
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=FIGURE_SYSTEM_PROMPT,
+                    temperature=0.5,
+                )
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    data = json.dumps({"text": chunk.text})
+                    yield f"data: {data}\n\n"
+
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        except Exception as e:
+            error_data = json.dumps({"error": str(e)})
+            yield f"data: {error_data}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@app.post("/api/chat/equation")
+async def equation_explain(request: EquationRequest):
+    """
+    Analyze and explain equations from PDF using image.
+    Streams response via SSE.
+    """
+    if not request.image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 is required")
+
+    async def event_generator():
+        try:
+            # Build the user prompt
+            page_ref = f" (from page {request.page})" if request.page else ""
+            label_part = f"\n\nEquation label: {request.label}" if request.label else ""
+            context_part = f"\n\nContext{page_ref}:\n{request.context}" if request.context else ""
+            text_prompt = f"""Analyze this equation image and provide a detailed explanation.{label_part}{context_part}"""
+
+            # Create multimodal content with image
+            contents = [
+                types.Part.from_bytes(
+                    data=request.image_base64.encode() if isinstance(request.image_base64, str) else request.image_base64,
+                    mime_type="image/png"
+                ),
+                types.Part.from_text(text_prompt)
+            ]
+
+            # Stream the response using FORMULA_SYSTEM_PROMPT (same as text formulas)
+            response = client.models.generate_content_stream(
+                model="gemini-3-flash-preview",
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=FORMULA_SYSTEM_PROMPT,
                     temperature=0.5,
                 )
             )
