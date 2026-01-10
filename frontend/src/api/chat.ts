@@ -1,7 +1,20 @@
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface ChatStreamCallbacks {
   onChunk: (text: string) => void;
   onComplete: () => void;
   onError: (error: string) => void;
+}
+
+export interface ChatRequest {
+  question: string;
+  context: string;
+  page?: number;
+  file_search_store_id?: string;
+  history?: ChatMessage[];
 }
 
 export async function streamChat(
@@ -9,19 +22,25 @@ export async function streamChat(
   context: string,
   pageNumber: number | undefined,
   fileSearchStoreId: string | undefined,
+  history: ChatMessage[],
   callbacks: ChatStreamCallbacks
 ): Promise<void> {
-  const params = new URLSearchParams({
+  const body: ChatRequest = {
     question,
     context,
-    ...(pageNumber && { page: pageNumber.toString() }),
+    ...(pageNumber && { page: pageNumber }),
     ...(fileSearchStoreId && { file_search_store_id: fileSearchStoreId }),
-  });
+    ...(history.length > 0 && { history }),
+  };
 
   try {
-    const response = await fetch(`/api/chat/stream?${params}`, {
-      method: 'GET',
-      headers: { Accept: 'text/event-stream' },
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

@@ -44,3 +44,16 @@ class LearningPlanResponse(BaseModel):
     job_id: str
     status: str
     message: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    context: str
+    page: Optional[int] = None
+    file_search_store_id: Optional[str] = None
+    history: Optional[list[ChatMessage]] = None

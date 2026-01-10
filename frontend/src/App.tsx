@@ -6,7 +6,7 @@ import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { uploadPdf, streamChat } from './api';
+import { uploadPdf, streamChat, ChatMessage } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -414,12 +414,21 @@ export default function App() {
       )
     );
 
+    // Build conversation history from previous messages (exclude first welcome message)
+    const history: ChatMessage[] = window.messages
+      .slice(1) // Skip first assistant welcome message
+      .map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+
     // Stream response from backend (pass fileSearchStoreId for RAG)
     streamChat(
       content,
       window.selectedText,
       window.pageReference,
       currentProject?.fileSearchStoreId,
+      history,
       {
         onChunk: (text) => {
           setRabbitHoleWindows(prev =>

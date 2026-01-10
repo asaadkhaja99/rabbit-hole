@@ -22,7 +22,8 @@ from models import (
     PDFListResponse,
     FigureRequest,
     LearningPlanRequest,
-    LearningPlanResponse
+    LearningPlanResponse,
+    ChatRequest,
 )
 from storage import pdf_storage, jobs_storage
 
@@ -211,36 +212,48 @@ async def get_pdf_info(filename: str):
     return PDFInfo(**pdf_data)
 
 
-@app.get("/api/chat/stream")
-async def chat_stream(
-    question: str,
-    context: str,
-    page: Optional[int] = None,
-    file_search_store_id: Optional[str] = None
-):
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
     """
     Stream AI response for highlighted text questions.
     Uses SSE (Server-Sent Events) for real-time streaming.
     If file_search_store_id is provided, uses RAG to query the full PDF.
+    Supports conversation history for multi-turn conversations.
     """
-    if not question or not context:
+    if not request.question or not request.context:
         raise HTTPException(status_code=400, detail="Both question and context are required")
 
     async def event_generator():
         try:
-            # Build the user prompt
-            page_ref = f" (from page {page})" if page else ""
-            user_prompt = f"""Context{page_ref}:
-{context}
+            # Build conversation history
+            page_ref = f" (from page {request.page})" if request.page else ""
 
-Question: {question}"""
+            # Format the contents for Gemini
+            contents = []
+
+            # Add initial context as first user message
+            context_message = f"""Context{page_ref}:
+{request.context}
+
+I'll be asking questions about this context. Please help me understand it."""
+            contents.append({"role": "user", "parts": [{"text": context_message}]})
+            contents.append({"role": "model", "parts": [{"text": "I'll help you understand this context. What would you like to know?"}]})
+
+            # Add conversation history
+            if request.history:
+                for msg in request.history:
+                    role = "user" if msg.role == "user" else "model"
+                    contents.append({"role": role, "parts": [{"text": msg.content}]})
+
+            # Add the current question
+            contents.append({"role": "user", "parts": [{"text": request.question}]})
 
             # Configure tools if file_search_store_id is provided
             tools = []
-            if file_search_store_id:
+            if request.file_search_store_id:
                 tools.append(types.Tool(
                     file_search=types.FileSearch(
-                        file_search_store_names=[file_search_store_id]
+                        file_search_store_names=[request.file_search_store_id]
                     )
                 ))
 
@@ -256,7 +269,7 @@ Question: {question}"""
             # Stream the response (use async iterator to avoid blocking event loop)
             response = client.models.generate_content_stream(
                 model="gemini-3-flash-preview",
-                contents=user_prompt,
+                contents=contents,
                 config=config
             )
 
