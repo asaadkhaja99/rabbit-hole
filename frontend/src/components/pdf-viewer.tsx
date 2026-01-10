@@ -333,6 +333,7 @@ export function PdfViewer({
   const [equationAnnotations, setEquationAnnotations] = useState<EquationAnnotation[]>([]);
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const annotationOverlayRef = useRef<HTMLDivElement | null>(null);
+  const [viewerReady, setViewerReady] = useState(false);
 
   // Clear selection tooltip when text is deselected
   useEffect(() => {
@@ -380,13 +381,16 @@ export function PdfViewer({
   // Convert savedRabbitHoles and active rabbit holes to highlights
   const highlights = useMemo((): AppHighlight[] => {
     const result: AppHighlight[] = [];
+    const getHighlightType = (position: ScaledPosition): AppHighlight['type'] => {
+      return position.rects && position.rects.length > 0 ? 'text' : 'area';
+    };
 
     // Add saved rabbit hole highlights (green)
     savedRabbitHoles.forEach(rabbitHole => {
       if (rabbitHole.highlightPosition) {
         result.push({
           id: `rabbithole-${rabbitHole.id}`,
-          type: 'text',
+          type: getHighlightType(rabbitHole.highlightPosition),
           position: rabbitHole.highlightPosition,
           commentId: rabbitHole.id,  // Keep commentId field name for now to minimize changes
           isActive: false,
@@ -399,7 +403,7 @@ export function PdfViewer({
       if (rh.highlightPosition) {
         result.push({
           id: `rabbit-${rh.id}`,
-          type: 'text',
+          type: getHighlightType(rh.highlightPosition),
           position: rh.highlightPosition,
           rabbitHoleId: rh.id,
           isActive: true,
@@ -702,15 +706,37 @@ export function PdfViewer({
     };
   }, [equationStore, captureEquationScreenshot]);
 
+  // Mark viewer as ready when available
+  useEffect(() => {
+    const checkViewer = () => {
+      const viewer = highlighterUtilsRef.current?.getViewer();
+      if (viewer && !viewerReady) {
+        console.log('Viewer is now ready');
+        setViewerReady(true);
+      }
+    };
+
+    // Check immediately
+    checkViewer();
+
+    // Check periodically until ready
+    const interval = setInterval(checkViewer, 100);
+
+    return () => clearInterval(interval);
+  }, [viewerReady]);
+
   // Render equation annotations and persisted equations in the viewer overlay
   useEffect(() => {
+    // Ensure overlay is created first
     const viewer = highlighterUtilsRef.current?.getViewer();
-    if (!viewer) return;
+    if (!viewer) {
+      console.log('Viewer not ready yet, skipping render');
+      return;
+    }
 
-    const container = viewer.container;
-
-    // Create or reuse annotation overlay
     if (!annotationOverlayRef.current) {
+      console.log('Creating annotation overlay');
+      const container = viewer.container;
       const overlay = document.createElement('div');
       overlay.style.position = 'absolute';
       overlay.style.top = '0';
@@ -723,13 +749,21 @@ export function PdfViewer({
       container.style.position = 'relative';
       container.appendChild(overlay);
       annotationOverlayRef.current = overlay;
+      console.log('Overlay created and attached');
     }
 
     const overlay = annotationOverlayRef.current;
+
+    console.log('Rendering annotations and persisted equations. Annotations:', equationAnnotations.length, 'Persisted:', persistedEquations.length);
+
     overlay.innerHTML = ''; // Clear previous content
+
+    // Remove any existing input boxes from previous renders
+    document.querySelectorAll('.equation-input-box').forEach(el => el.remove());
 
     // Render equation annotations (blue rectangles with input boxes)
     equationAnnotations.forEach(annotation => {
+      console.log('Rendering annotation:', annotation.id, annotation.bounds);
       // Rectangle
       const rect = document.createElement('div');
       rect.style.position = 'absolute';
@@ -742,11 +776,20 @@ export function PdfViewer({
       rect.style.pointerEvents = 'none';
       overlay.appendChild(rect);
 
-      // Input box
+      // Input box - append directly to body to escape pointer-events restriction
       const inputBox = document.createElement('div');
-      inputBox.style.position = 'absolute';
-      inputBox.style.left = `${annotation.bounds.left}px`;
-      inputBox.style.top = `${annotation.bounds.top + annotation.bounds.height + 8}px`;
+      inputBox.className = 'equation-input-box'; // For cleanup
+      inputBox.setAttribute('data-annotation-id', annotation.id); // For tracking
+      inputBox.style.position = 'fixed';
+
+      // Calculate fixed position from absolute bounds
+      const container = viewer.container;
+      const containerRect = container.getBoundingClientRect();
+      const fixedLeft = containerRect.left + annotation.bounds.left - container.scrollLeft;
+      const fixedTop = containerRect.top + annotation.bounds.top + annotation.bounds.height + 8 - container.scrollTop;
+
+      inputBox.style.left = `${fixedLeft}px`;
+      inputBox.style.top = `${fixedTop}px`;
       inputBox.style.minWidth = `${Math.max(300, annotation.bounds.width)}px`;
       inputBox.style.background = 'white';
       inputBox.style.borderRadius = '8px';
@@ -757,7 +800,7 @@ export function PdfViewer({
       inputBox.style.gap = '8px';
       inputBox.style.alignItems = 'center';
       inputBox.style.pointerEvents = 'auto';
-      inputBox.style.zIndex = '10000';
+      inputBox.style.zIndex = '99999';
 
       const input = document.createElement('input');
       input.type = 'text';
@@ -789,9 +832,13 @@ export function PdfViewer({
       submitBtn.style.fontWeight = 'bold';
       submitBtn.addEventListener('click', () => {
         const question = input.value.trim();
+        console.log('Submit clicked:', question, annotation.imageDataUrl ? 'has image' : 'no image');
         if (question && annotation.imageDataUrl) {
+          console.log('Calling onStartEquationRabbitHole with bounds:', annotation.bounds);
           onStartEquationRabbitHole(question, annotation.imageDataUrl, annotation.id, annotation.pageNumber, annotation.bounds);
           setEquationAnnotations(prev => prev.filter(a => a.id !== annotation.id));
+        } else {
+          console.log('Submit blocked - missing question or image');
         }
       });
 
@@ -811,7 +858,9 @@ export function PdfViewer({
       inputBox.appendChild(input);
       inputBox.appendChild(submitBtn);
       inputBox.appendChild(cancelBtn);
-      overlay.appendChild(inputBox);
+
+      // Append to body instead of overlay
+      document.body.appendChild(inputBox);
 
       // Auto-focus the input
       setTimeout(() => input.focus(), 0);
@@ -826,30 +875,22 @@ export function PdfViewer({
       });
     });
 
-    // Render persisted equations (green rectangles, current page only)
-    persistedEquations
-      .filter(eq => eq.pageNumber === currentPage)
-      .forEach(equation => {
-        const rect = document.createElement('div');
-        rect.style.position = 'absolute';
-        rect.style.left = `${equation.bounds.left}px`;
-        rect.style.top = `${equation.bounds.top}px`;
-        rect.style.width = `${equation.bounds.width}px`;
-        rect.style.height = `${equation.bounds.height}px`;
-        rect.style.border = '2px solid #16a34a';
-        rect.style.background = 'rgba(34, 197, 94, 0.2)';
-        rect.style.pointerEvents = 'none';
-        overlay.appendChild(rect);
-      });
+    // Render persisted equations (green rectangles)
+    console.log('Rendering persisted equations:', persistedEquations);
 
-    return () => {
-      // Cleanup overlay on unmount
-      if (annotationOverlayRef.current?.parentNode) {
-        annotationOverlayRef.current.parentNode.removeChild(annotationOverlayRef.current);
-        annotationOverlayRef.current = null;
-      }
-    };
-  }, [equationAnnotations, persistedEquations, currentPage, onStartEquationRabbitHole]);
+    persistedEquations.forEach(equation => {
+      const rect = document.createElement('div');
+      rect.style.position = 'absolute';
+      rect.style.left = `${equation.bounds.left}px`;
+      rect.style.top = `${equation.bounds.top}px`;
+      rect.style.width = `${equation.bounds.width}px`;
+      rect.style.height = `${equation.bounds.height}px`;
+      rect.style.border = '2px solid #16a34a';
+      rect.style.background = 'rgba(34, 197, 94, 0.2)';
+      rect.style.pointerEvents = 'none';
+      overlay.appendChild(rect);
+    });
+  }, [equationAnnotations, persistedEquations, onStartEquationRabbitHole, viewerReady]);
 
   // Equation annotation drawing handlers - using global mouse events for reliability
   useEffect(() => {
@@ -1021,7 +1062,12 @@ export function PdfViewer({
         imageDataUrl,
       };
 
-      setEquationAnnotations(prev => [...prev, annotation]);
+      console.log('Creating equation annotation:', annotation);
+      setEquationAnnotations(prev => {
+        const updated = [...prev, annotation];
+        console.log('Updated equationAnnotations:', updated);
+        return updated;
+      });
 
       localIsDrawing = false;
       localDrawStart = null;
