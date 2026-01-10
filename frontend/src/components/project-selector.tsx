@@ -9,6 +9,7 @@ export interface Project {
   createdAt: Date;
   lastModified: Date;
   rabbitHolesCount: number;
+  fileSearchStoreId?: string;
 }
 
 interface ProjectSelectorProps {

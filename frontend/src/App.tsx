@@ -4,6 +4,9 @@ import { PdfViewer } from './components/pdf-viewer';
 import { RabbitHolePopup } from './components/rabbit-hole-popup';
 import { RabbitHoleGraph } from './components/rabbit-hole-graph';
 import { ProjectSelector, Project } from './components/project-selector';
+import { Toaster } from './components/ui/sonner';
+import { toast } from 'sonner';
+import { uploadPdf } from './api';
 import type { Highlight, GhostHighlight, ScaledPosition } from 'react-pdf-highlighter-extended';
 
 // IndexedDB helpers for storing PDF files
@@ -465,6 +468,28 @@ export default function App() {
     setCurrentPage(1);
     setSavedRabbitHoles([]);
     setRabbitHoleWindows([]);
+
+    // Upload to backend for Gemini File Search (non-blocking)
+    uploadPdf(file, file.name)
+      .then((result) => {
+        // Update project with fileSearchStoreId
+        setProjects(prev =>
+          prev.map(p =>
+            p.id === projectId
+              ? { ...p, fileSearchStoreId: result.file_search_store_id }
+              : p
+          )
+        );
+        setCurrentProject(prev =>
+          prev?.id === projectId
+            ? { ...prev, fileSearchStoreId: result.file_search_store_id }
+            : prev
+        );
+        toast.success('Uploaded to Gemini File Search');
+      })
+      .catch(() => {
+        toast.error('Failed to upload to Gemini File Search');
+      });
   };
 
   const handleSelectProject = async (project: Project) => {
@@ -650,6 +675,9 @@ export default function App() {
           onNodeClick={handleMapNodeClick}
         />
       )}
+
+      {/* Toast notifications */}
+      <Toaster position="top-right" richColors />
     </div>
   );
 }
