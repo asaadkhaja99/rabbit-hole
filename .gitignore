@@ -209,3 +209,6 @@ __marimo__/
 .examples/
 
 .claude
+
+# Backend data storage
+backend/data/
