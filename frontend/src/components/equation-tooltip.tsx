@@ -8,7 +8,8 @@ interface EquationTooltipProps {
   pageNumber: number;
   position: { x: number; y: number };
   onClose: () => void;
-  onAskAboutEquation: (question: string, imageDataUrl: string, equationNumber: string, pageNumber: number) => void;
+  onAskAboutEquation: (question: string, imageDataUrl: string, equationNumber: string, pageNumber: number, bounds: { left: number; top: number; width: number; height: number }) => void;
+  bounds?: { left: number; top: number; width: number; height: number };
 }
 
 export function EquationTooltip({
@@ -19,13 +20,14 @@ export function EquationTooltip({
   position,
   onClose,
   onAskAboutEquation,
+  bounds = { left: 0, top: 0, width: 100, height: 100 },
 }: EquationTooltipProps) {
   const [question, setQuestion] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSend = () => {
     if (!question.trim()) return;
-    onAskAboutEquation(question.trim(), imageDataUrl, equationNumber, pageNumber);
+    onAskAboutEquation(question.trim(), imageDataUrl, equationNumber, pageNumber, bounds);
     setQuestion('');
     onClose();
   };

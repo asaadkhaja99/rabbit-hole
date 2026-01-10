@@ -6,16 +6,16 @@ import {
   AreaHighlight,
   useHighlightContainerContext,
 } from 'react-pdf-highlighter-extended';
-import type { Highlight, PdfSelection, ScaledPosition, PdfHighlighterUtils, PDFDocumentProxy } from 'react-pdf-highlighter-extended';
+import type { Highlight, PdfSelection, ScaledPosition, PdfHighlighterUtils } from 'react-pdf-highlighter-extended';
 import { FileQuestion, Rabbit } from 'lucide-react';
 import { SavedRabbitHole, RabbitHoleWindow } from '../App';
 import { HighlightMarkers } from './highlight-markers';
 import { ContextMenu } from './context-menu';
 import { FigureTooltip } from './figure-tooltip';
 import { EquationTooltip } from './equation-tooltip';
-import { EquationAnnotationOverlay, type EquationAnnotation } from './equation-annotation';
-import { extractFiguresFromPage, captureFigureRegion, parseFigureReference, type FigureInfo } from '../utils/figure-extractor';
-import { extractEquationsFromPage, captureEquationRegion, parseEquationReference, type EquationInfo } from '../utils/equation-extractor';
+import { type EquationAnnotation } from './equation-annotation';
+import { extractFiguresFromPage, captureFigureRegion, type FigureInfo } from '../utils/figure-extractor';
+import { extractEquationsFromPage, captureEquationRegion, type EquationInfo } from '../utils/equation-extractor';
 import { useFigureStore } from '../hooks/useFigureStore';
 import { useEquationStore } from '../hooks/useEquationStore';
 import 'react-pdf-highlighter-extended/dist/esm/style/PdfHighlighter.css';
@@ -200,7 +200,7 @@ function PdfHighlighterWrapper({
   figureStore,
   equationStore,
 }: {
-  pdfDocument: PDFDocumentProxy;
+  pdfDocument: any;
   numPages: number | null;
   onDocumentLoad: (numPages: number) => void;
   highlights: AppHighlight[];
@@ -331,10 +331,8 @@ export function PdfViewer({
 
   // Equation annotation state (for drawing rectangles)
   const [equationAnnotations, setEquationAnnotations] = useState<EquationAnnotation[]>([]);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageNum: number } | null>(null);
-  const [currentDraw, setCurrentDraw] = useState<{ x: number; y: number } | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement>(null);
+  const annotationOverlayRef = useRef<HTMLDivElement | null>(null);
 
   // Clear selection tooltip when text is deselected
   useEffect(() => {
@@ -704,156 +702,348 @@ export function PdfViewer({
     };
   }, [equationStore, captureEquationScreenshot]);
 
-  // Equation annotation drawing handlers
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  // Render equation annotations and persisted equations in the viewer overlay
+  useEffect(() => {
+    const viewer = highlighterUtilsRef.current?.getViewer();
+    if (!viewer) return;
+
+    const container = viewer.container;
+
+    // Create or reuse annotation overlay
+    if (!annotationOverlayRef.current) {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'absolute';
+      overlay.style.top = '0';
+      overlay.style.left = '0';
+      overlay.style.width = '100%';
+      overlay.style.height = '100%';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.zIndex = '1000';
+      overlay.className = 'equation-annotation-overlay';
+      container.style.position = 'relative';
+      container.appendChild(overlay);
+      annotationOverlayRef.current = overlay;
+    }
+
+    const overlay = annotationOverlayRef.current;
+    overlay.innerHTML = ''; // Clear previous content
+
+    // Render equation annotations (blue rectangles with input boxes)
+    equationAnnotations.forEach(annotation => {
+      // Rectangle
+      const rect = document.createElement('div');
+      rect.style.position = 'absolute';
+      rect.style.left = `${annotation.bounds.left}px`;
+      rect.style.top = `${annotation.bounds.top}px`;
+      rect.style.width = `${annotation.bounds.width}px`;
+      rect.style.height = `${annotation.bounds.height}px`;
+      rect.style.border = '3px solid #2563eb';
+      rect.style.background = 'rgba(59, 130, 246, 0.3)';
+      rect.style.pointerEvents = 'none';
+      overlay.appendChild(rect);
+
+      // Input box
+      const inputBox = document.createElement('div');
+      inputBox.style.position = 'absolute';
+      inputBox.style.left = `${annotation.bounds.left}px`;
+      inputBox.style.top = `${annotation.bounds.top + annotation.bounds.height + 8}px`;
+      inputBox.style.minWidth = `${Math.max(300, annotation.bounds.width)}px`;
+      inputBox.style.background = 'white';
+      inputBox.style.borderRadius = '8px';
+      inputBox.style.boxShadow = '0 10px 25px rgba(0,0,0,0.2)';
+      inputBox.style.border = '1px solid #bfdbfe';
+      inputBox.style.padding = '8px';
+      inputBox.style.display = 'flex';
+      inputBox.style.gap = '8px';
+      inputBox.style.alignItems = 'center';
+      inputBox.style.pointerEvents = 'auto';
+      inputBox.style.zIndex = '10000';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'What do you want to know about this equation?';
+      input.style.flex = '1';
+      input.style.padding = '6px 12px';
+      input.style.fontSize = '14px';
+      input.style.border = '1px solid #e2e8f0';
+      input.style.borderRadius = '6px';
+      input.style.outline = 'none';
+      input.addEventListener('focus', () => {
+        input.style.borderColor = '#3b82f6';
+        input.style.boxShadow = '0 0 0 1px #3b82f6';
+      });
+      input.addEventListener('blur', () => {
+        input.style.borderColor = '#e2e8f0';
+        input.style.boxShadow = 'none';
+      });
+
+      const submitBtn = document.createElement('button');
+      submitBtn.innerHTML = '✓';
+      submitBtn.style.padding = '6px 12px';
+      submitBtn.style.background = '#2563eb';
+      submitBtn.style.color = 'white';
+      submitBtn.style.border = 'none';
+      submitBtn.style.borderRadius = '6px';
+      submitBtn.style.cursor = 'pointer';
+      submitBtn.style.fontSize = '16px';
+      submitBtn.style.fontWeight = 'bold';
+      submitBtn.addEventListener('click', () => {
+        const question = input.value.trim();
+        if (question && annotation.imageDataUrl) {
+          onStartEquationRabbitHole(question, annotation.imageDataUrl, annotation.id, annotation.pageNumber, annotation.bounds);
+          setEquationAnnotations(prev => prev.filter(a => a.id !== annotation.id));
+        }
+      });
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.innerHTML = '✕';
+      cancelBtn.style.padding = '6px 10px';
+      cancelBtn.style.background = '#f1f5f9';
+      cancelBtn.style.color = '#64748b';
+      cancelBtn.style.border = 'none';
+      cancelBtn.style.borderRadius = '6px';
+      cancelBtn.style.cursor = 'pointer';
+      cancelBtn.style.fontSize = '16px';
+      cancelBtn.addEventListener('click', () => {
+        setEquationAnnotations(prev => prev.filter(a => a.id !== annotation.id));
+      });
+
+      inputBox.appendChild(input);
+      inputBox.appendChild(submitBtn);
+      inputBox.appendChild(cancelBtn);
+      overlay.appendChild(inputBox);
+
+      // Auto-focus the input
+      setTimeout(() => input.focus(), 0);
+
+      // Enter to submit, Escape to cancel
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          submitBtn.click();
+        } else if (e.key === 'Escape') {
+          cancelBtn.click();
+        }
+      });
+    });
+
+    // Render persisted equations (green rectangles, current page only)
+    persistedEquations
+      .filter(eq => eq.pageNumber === currentPage)
+      .forEach(equation => {
+        const rect = document.createElement('div');
+        rect.style.position = 'absolute';
+        rect.style.left = `${equation.bounds.left}px`;
+        rect.style.top = `${equation.bounds.top}px`;
+        rect.style.width = `${equation.bounds.width}px`;
+        rect.style.height = `${equation.bounds.height}px`;
+        rect.style.border = '2px solid #16a34a';
+        rect.style.background = 'rgba(34, 197, 94, 0.2)';
+        rect.style.pointerEvents = 'none';
+        overlay.appendChild(rect);
+      });
+
+    return () => {
+      // Cleanup overlay on unmount
+      if (annotationOverlayRef.current?.parentNode) {
+        annotationOverlayRef.current.parentNode.removeChild(annotationOverlayRef.current);
+        annotationOverlayRef.current = null;
+      }
+    };
+  }, [equationAnnotations, persistedEquations, currentPage, onStartEquationRabbitHole]);
+
+  // Equation annotation drawing handlers - using global mouse events for reliability
+  useEffect(() => {
     if (!isEquationMode) return;
 
     const viewer = highlighterUtilsRef.current?.getViewer();
     if (!viewer) return;
 
     const container = viewer.container;
-    const rect = container.getBoundingClientRect();
-    const x = e.clientX - rect.left + container.scrollLeft;
-    const y = e.clientY - rect.top + container.scrollTop;
+    let localDrawStart: { x: number; y: number; pageNum: number; pageEl: HTMLElement } | null = null;
+    let localCurrentDraw: { x: number; y: number } | null = null;
+    let localIsDrawing = false;
 
-    // Determine which page was clicked
-    const pages = container.querySelectorAll('.page');
-    let clickedPageNum = currentPage;
+    // Create overlay div for drawing preview
+    const drawOverlay = document.createElement('div');
+    drawOverlay.style.position = 'absolute';
+    drawOverlay.style.top = '0';
+    drawOverlay.style.left = '0';
+    drawOverlay.style.width = '100%';
+    drawOverlay.style.height = '100%';
+    drawOverlay.style.pointerEvents = 'none';
+    drawOverlay.style.zIndex = '9999';
+    container.style.position = 'relative';
+    container.appendChild(drawOverlay);
 
-    for (let i = 0; i < pages.length; i++) {
-      const pageEl = pages[i] as HTMLElement;
-      const pageRect = pageEl.getBoundingClientRect();
-      const pageY = pageRect.top - rect.top + container.scrollTop;
+    const handleMouseDown = (e: MouseEvent) => {
+      // Only handle left mouse button and clicks inside container
+      if (e.button !== 0) return;
 
-      if (y >= pageY && y <= pageY + pageRect.height) {
-        clickedPageNum = i + 1;
-        break;
+      const target = e.target as HTMLElement;
+      if (!container.contains(target)) return;
+
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left + container.scrollLeft;
+      const y = e.clientY - rect.top + container.scrollTop;
+
+      // Determine which page was clicked
+      const pages = container.querySelectorAll('.page');
+      let clickedPageNum = currentPage;
+      let clickedPageEl: HTMLElement | null = null;
+
+      for (let i = 0; i < pages.length; i++) {
+        const pageEl = pages[i] as HTMLElement;
+        const pageRect = pageEl.getBoundingClientRect();
+        const relY = e.clientY - pageRect.top;
+        const relX = e.clientX - pageRect.left;
+
+        if (relY >= 0 && relY <= pageRect.height && relX >= 0 && relX <= pageRect.width) {
+          clickedPageNum = i + 1;
+          clickedPageEl = pageEl;
+          break;
+        }
       }
-    }
 
-    setDrawStart({ x, y, pageNum: clickedPageNum });
-    setIsDrawing(true);
-    setCurrentDraw({ x, y });
-  }, [isEquationMode, currentPage]);
+      if (!clickedPageEl) return;
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDrawing || !drawStart) return;
+      localDrawStart = { x, y, pageNum: clickedPageNum, pageEl: clickedPageEl };
+      localCurrentDraw = { x, y };
+      localIsDrawing = true;
 
-    const viewer = highlighterUtilsRef.current?.getViewer();
-    if (!viewer) return;
-
-    const container = viewer.container;
-    const rect = container.getBoundingClientRect();
-    const x = e.clientX - rect.left + container.scrollLeft;
-    const y = e.clientY - rect.top + container.scrollTop;
-
-    setCurrentDraw({ x, y });
-  }, [isDrawing, drawStart]);
-
-  const handleMouseUp = useCallback(async () => {
-    if (!isDrawing || !drawStart || !currentDraw) {
-      setIsDrawing(false);
-      setDrawStart(null);
-      setCurrentDraw(null);
-      return;
-    }
-
-    const viewer = highlighterUtilsRef.current?.getViewer();
-    if (!viewer) {
-      setIsDrawing(false);
-      setDrawStart(null);
-      setCurrentDraw(null);
-      return;
-    }
-
-    // Calculate bounds
-    const left = Math.min(drawStart.x, currentDraw.x);
-    const top = Math.min(drawStart.y, currentDraw.y);
-    const width = Math.abs(currentDraw.x - drawStart.x);
-    const height = Math.abs(currentDraw.y - drawStart.y);
-
-    // Minimum size check
-    if (width < 20 || height < 20) {
-      setIsDrawing(false);
-      setDrawStart(null);
-      setCurrentDraw(null);
-      return;
-    }
-
-    // Capture the region from the canvas
-    const pageView = viewer.getPageView(drawStart.pageNum - 1);
-    if (!pageView?.canvas) {
-      setIsDrawing(false);
-      setDrawStart(null);
-      setCurrentDraw(null);
-      return;
-    }
-
-    const canvas = pageView.canvas;
-    const pageRect = pageView.div.getBoundingClientRect();
-    const containerRect = viewer.container.getBoundingClientRect();
-
-    // Convert coordinates to be relative to the page
-    const pageLeft = pageRect.left - containerRect.left + viewer.container.scrollLeft;
-    const pageTop = pageRect.top - containerRect.top + viewer.container.scrollTop;
-
-    const relativeLeft = left - pageLeft;
-    const relativeTop = top - pageTop;
-
-    // Capture the region
-    const tempCanvas = document.createElement('canvas');
-    const scale = canvas.width / pageRect.width;
-    tempCanvas.width = width * scale;
-    tempCanvas.height = height * scale;
-
-    const ctx = tempCanvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(
-        canvas,
-        relativeLeft * scale,
-        relativeTop * scale,
-        width * scale,
-        height * scale,
-        0,
-        0,
-        width * scale,
-        height * scale
-      );
-    }
-
-    const imageDataUrl = tempCanvas.toDataURL('image/png');
-
-    // Create annotation
-    const annotation: EquationAnnotation = {
-      id: Date.now().toString(),
-      bounds: {
-        left: relativeLeft,
-        top: relativeTop,
-        width,
-        height,
-      },
-      pageNumber: drawStart.pageNum,
-      question: '',
-      imageDataUrl,
+      e.preventDefault();
+      e.stopPropagation();
     };
 
-    setEquationAnnotations(prev => [...prev, annotation]);
-    setIsDrawing(false);
-    setDrawStart(null);
-    setCurrentDraw(null);
-  }, [isDrawing, drawStart, currentDraw]);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!localIsDrawing || !localDrawStart) return;
 
-  const handleRemoveAnnotation = useCallback((id: string) => {
-    setEquationAnnotations(prev => prev.filter(a => a.id !== id));
-  }, []);
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left + container.scrollLeft;
+      const y = e.clientY - rect.top + container.scrollTop;
 
-  const handleSubmitAnnotation = useCallback((id: string, question: string, imageDataUrl: string) => {
-    const annotation = equationAnnotations.find(a => a.id === id);
-    if (!annotation) return;
+      localCurrentDraw = { x, y };
 
-    // Call with bounds information
-    onStartEquationRabbitHole(question, imageDataUrl, id, annotation.pageNumber, annotation.bounds);
-  }, [equationAnnotations, onStartEquationRabbitHole]);
+      // Draw preview rectangle
+      const left = Math.min(localDrawStart.x, x);
+      const top = Math.min(localDrawStart.y, y);
+      const width = Math.abs(x - localDrawStart.x);
+      const height = Math.abs(y - localDrawStart.y);
+
+      drawOverlay.innerHTML = `<div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}px; height: ${height}px; border: 3px solid #2563eb; background: rgba(59, 130, 246, 0.3); pointer-events: none;"></div>`;
+
+      e.preventDefault();
+    };
+
+    const handleMouseUp = async (e: MouseEvent) => {
+      if (!localIsDrawing || !localDrawStart || !localCurrentDraw) {
+        localIsDrawing = false;
+        localDrawStart = null;
+        localCurrentDraw = null;
+        drawOverlay.innerHTML = '';
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const endX = e.clientX - rect.left + container.scrollLeft;
+      const endY = e.clientY - rect.top + container.scrollTop;
+
+      // Calculate bounds in container coordinates (with scroll)
+      const left = Math.min(localDrawStart.x, endX);
+      const top = Math.min(localDrawStart.y, endY);
+      const width = Math.abs(endX - localDrawStart.x);
+      const height = Math.abs(endY - localDrawStart.y);
+
+      // Clear preview
+      drawOverlay.innerHTML = '';
+
+      // Minimum size check
+      if (width < 20 || height < 20) {
+        localIsDrawing = false;
+        localDrawStart = null;
+        localCurrentDraw = null;
+        return;
+      }
+
+      // Capture the region from the canvas
+      const pageView = viewer.getPageView(localDrawStart.pageNum - 1);
+      if (!pageView?.canvas) {
+        localIsDrawing = false;
+        localDrawStart = null;
+        localCurrentDraw = null;
+        return;
+      }
+
+      const canvas = pageView.canvas;
+      const pageRect = localDrawStart.pageEl.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+
+      // Convert container coordinates (with scroll) to page-relative coordinates
+      const pageLeft = pageRect.left - containerRect.left + container.scrollLeft;
+      const pageTop = pageRect.top - containerRect.top + container.scrollTop;
+
+      const relativeLeft = left - pageLeft;
+      const relativeTop = top - pageTop;
+
+      // Capture the region
+      const tempCanvas = document.createElement('canvas');
+      const scale = canvas.width / pageRect.width;
+      tempCanvas.width = width * scale;
+      tempCanvas.height = height * scale;
+
+      const ctx = tempCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(
+          canvas,
+          relativeLeft * scale,
+          relativeTop * scale,
+          width * scale,
+          height * scale,
+          0,
+          0,
+          width * scale,
+          height * scale
+        );
+      }
+
+      const imageDataUrl = tempCanvas.toDataURL('image/png');
+
+      // Create annotation with container-relative coordinates (with scroll)
+      const annotation: EquationAnnotation = {
+        id: Date.now().toString(),
+        bounds: {
+          left,
+          top,
+          width,
+          height,
+        },
+        pageNumber: localDrawStart.pageNum,
+        question: '',
+        imageDataUrl,
+      };
+
+      setEquationAnnotations(prev => [...prev, annotation]);
+
+      localIsDrawing = false;
+      localDrawStart = null;
+      localCurrentDraw = null;
+
+      e.preventDefault();
+    };
+
+    // Attach to document for global capture
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      if (drawOverlay.parentNode) {
+        drawOverlay.parentNode.removeChild(drawOverlay);
+      }
+    };
+  }, [isEquationMode, currentPage]);
 
   const handleSelection = useCallback((selection: PdfSelection) => {
     if (selection.content.text && selection.content.text.trim().length > 0) {
@@ -891,9 +1081,6 @@ export function PdfViewer({
     <div
       className="h-full flex flex-col relative"
       onContextMenu={handleContextMenu}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
       style={{ cursor: isEquationMode ? 'crosshair' : 'default' }}
       ref={viewerContainerRef}
     >
@@ -914,50 +1101,6 @@ export function PdfViewer({
           />
         )}
       </PdfLoader>
-
-      {/* Drawing rectangle preview */}
-      {isDrawing && drawStart && currentDraw && (
-        <div
-          className="absolute border-blue-600 bg-blue-400/50 pointer-events-none"
-          style={{
-            left: Math.min(drawStart.x, currentDraw.x),
-            top: Math.min(drawStart.y, currentDraw.y),
-            width: Math.abs(currentDraw.x - drawStart.x),
-            height: Math.abs(currentDraw.y - drawStart.y),
-            zIndex: 9999,
-            borderWidth: '3px',
-          }}
-        />
-      )}
-
-      {/* Equation annotations */}
-      {equationAnnotations.map(annotation => (
-        <EquationAnnotationOverlay
-          key={annotation.id}
-          annotation={annotation}
-          onRemove={handleRemoveAnnotation}
-          onSubmit={handleSubmitAnnotation}
-          scale={1}
-        />
-      ))}
-
-      {/* Persisted equation rectangles */}
-      {persistedEquations
-        .filter(eq => eq.pageNumber === currentPage)
-        .map(equation => (
-          <div
-            key={equation.id}
-            className="absolute border-green-600 bg-green-400/40 pointer-events-none"
-            style={{
-              left: equation.bounds.left,
-              top: equation.bounds.top,
-              width: equation.bounds.width,
-              height: equation.bounds.height,
-              borderWidth: '2px',
-              zIndex: 100,
-            }}
-          />
-        ))}
 
       {/* Selection tooltip */}
       {currentSelection && !contextMenu && (
