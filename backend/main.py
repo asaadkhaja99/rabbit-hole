@@ -3,7 +3,6 @@ import base64
 import io
 import json
 import os
-import time
 import traceback
 import yaml
 from contextlib import asynccontextmanager
@@ -129,8 +128,9 @@ async def upload_pdf(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     try:
-        # Create file search store for this PDF
-        file_search_store = client.file_search_stores.create(
+        # Create file search store for this PDF (run in thread pool to avoid blocking)
+        file_search_store = await asyncio.to_thread(
+            client.file_search_stores.create,
             config={'display_name': display_name or file.filename}
         )
 
@@ -143,20 +143,21 @@ async def upload_pdf(
             content = await file.read()
             f.write(content)
 
-        # Upload to file search store
-        operation = client.file_search_stores.upload_to_file_search_store(
+        # Upload to file search store (run in thread pool to avoid blocking)
+        operation = await asyncio.to_thread(
+            client.file_search_stores.upload_to_file_search_store,
             file=str(temp_path),
             file_search_store_name=file_search_store.name,
             config={'display_name': display_name or file.filename}
         )
 
-        # Poll for completion (with timeout)
+        # Poll for completion (with timeout) - use async sleep to avoid blocking
         max_wait = 30  # seconds
         elapsed = 0
         while not operation.done and elapsed < max_wait:
-            time.sleep(2)
+            await asyncio.sleep(2)
             elapsed += 2
-            operation = client.operations.get(operation)
+            operation = await asyncio.to_thread(client.operations.get, operation)
 
         # Clean up temp file
         temp_path.unlink(missing_ok=True)
@@ -446,7 +447,8 @@ If you cannot determine a field, use reasonable defaults:
 - year: null
 - summary: A brief guess based on any available information"""
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-2.0-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -531,7 +533,8 @@ Please provide a comprehensive learning summary that includes:
 
 Write in a friendly, encouraging tone. Be specific about the paper content they explored."""
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-2.0-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -642,7 +645,8 @@ async def equation_annotate(request: EquationAnnotationRequest):
             types.Part.from_text(text=f"Question: {request.question}")
         ]
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-3-pro-image-preview",
             contents=contents,
             config=types.GenerateContentConfig(
@@ -781,7 +785,8 @@ async def process_learning_plan(job_id: str, request: LearningPlanRequest):
         job_data["progress"] = "Running deep research..."
         jobs_storage.set(job_id, job_data)
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-3-flash-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
