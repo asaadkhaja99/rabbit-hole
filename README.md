@@ -3,7 +3,6 @@
 An intelligent PDF learning assistant powered by Google's Gemini AI that helps you deeply understand academic papers and technical documents through interactive exploration and visual equation annotations.
 
 ![Rabbit Hole](https://img.shields.io/badge/AI-Gemini%203-purple)
-![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## 🌟 Features
 
@@ -265,23 +264,9 @@ All data is stored locally in JSON files:
 - No authentication implemented (add for production use)
 
 
-## 📝 License
-
-MIT License - feel free to use and modify for your projects.
-
 ## 🙏 Acknowledgments
 
 - Google Gemini AI for powerful language and image models
 - react-pdf-highlighter-extended for PDF interaction
-- The open-source community
-
-## 📧 Support
-
-For issues and questions:
-- Create an issue on GitHub
-- Check existing issues for solutions
-- Review console logs for detailed error messages
 
 ---
-
-Built with ❤️ for deeper understanding of complex documents.
