@@ -1,8 +1,12 @@
 # Rabbit Hole
 
-An intelligent PDF learning assistant powered by Google's Gemini AI that helps you deeply understand academic papers and technical documents through interactive exploration and visual equation annotations.
+An intelligent PDF learning assistant powered by Google's Gemini AI that helps you deeply understand academic papers and technical documents through interactive exploration and visual equation annotations. Built during the Gemini 3 Hackathon Singapore on Jan 10th 2026.
 
 ![Rabbit Hole](https://img.shields.io/badge/AI-Gemini%203-purple)
+
+## Demo Video
+https://drive.google.com/file/d/174XGYHRZexPE_uonN8pJeYO6WcKphWz0/view?usp=sharing
+
 
 ## 🌟 Features
 
