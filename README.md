@@ -5,7 +5,7 @@ An intelligent PDF learning assistant powered by Google's Gemini AI that helps y
 ![Rabbit Hole](https://img.shields.io/badge/AI-Gemini%203-purple)
 
 ## Demo Video
-![Demo Video](https://youtu.be/cIfQqVJnJlM)
+[![Demo Video](https://img.youtube.com/vi/cIfQqVJnJlM/0.jpg)](https://www.youtube.com/watch?v=cIfQqVJnJlM)
 
 
 ## 🌟 Features
